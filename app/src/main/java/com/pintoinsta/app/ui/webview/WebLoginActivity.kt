@@ -47,6 +47,7 @@ class WebLoginActivity : AppCompatActivity() {
         const val EXTRA_FROM_CARD = "extra_from_card"
         const val PLATFORM_PINTEREST = "PINTEREST"
         const val PLATFORM_INSTAGRAM = "INSTAGRAM"
+        private const val TAG = "WebLoginActivity"
     }
 
     private lateinit var binding: ActivityWebLoginBinding

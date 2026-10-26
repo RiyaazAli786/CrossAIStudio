@@ -6,9 +6,11 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -116,6 +118,36 @@ class SettingsFragment : Fragment() {
         // Account Import button
         binding.btnImportAccounts.setOnClickListener {
             showImportOptionsDialog()
+        }
+
+        // Auto-scroll so keyword text field is pushed fully above soft keyboard
+        val scrollToKeywordInput = {
+            binding.scrollSettings.postDelayed({
+                val targetTop = binding.layoutKeywordSection.top
+                binding.scrollSettings.smoothScrollTo(0, targetTop)
+            }, 250)
+        }
+
+        binding.etKeyword.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                scrollToKeywordInput()
+            }
+        }
+
+        binding.etKeyword.setOnClickListener {
+            scrollToKeywordInput()
+        }
+
+        // Add Keyword on keyboard Done action
+        binding.etKeyword.setOnEditorActionListener { _, actionId, event ->
+            if (actionId == EditorInfo.IME_ACTION_DONE ||
+                (event != null && event.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
+            ) {
+                binding.btnAddKeyword.performClick()
+                true
+            } else {
+                false
+            }
         }
 
         // Add Keyword button

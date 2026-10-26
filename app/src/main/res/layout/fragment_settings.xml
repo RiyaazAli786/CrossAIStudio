@@ -26,17 +26,32 @@
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- App Theme / Appearance (Capsule Toggle) -->
-    <com.google.android.material.card.MaterialCardView
+    <!-- All Settings Content inside NestedScrollView so keyboard pushes keyword field up -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/scrollSettings"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginHorizontal="16dp"
-        android:layout_marginTop="12dp"
-        app:cardBackgroundColor="@color/surface_card"
-        app:cardCornerRadius="14dp"
-        app:cardElevation="1dp"
-        app:strokeColor="@color/divider"
-        app:strokeWidth="1dp">
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:scrollbars="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingBottom="48dp">
+
+            <!-- App Theme / Appearance (Capsule Toggle) -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="16dp"
+                android:layout_marginTop="12dp"
+                app:cardBackgroundColor="@color/surface_card"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/divider"
+                app:strokeWidth="1dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -206,6 +221,7 @@
 
         <!-- Add Keyword Input -->
         <LinearLayout
+            android:id="@+id/layoutKeywordSection"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
@@ -229,6 +245,7 @@
                     android:id="@+id/etKeyword"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:imeOptions="actionDone"
                     android:inputType="text"
                     android:maxLines="1"
                     android:textColor="@color/text_primary"
@@ -252,9 +269,12 @@
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvKeywords"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="wrap_content"
         android:clipToPadding="false"
+        android:nestedScrollingEnabled="false"
         android:paddingBottom="16dp" />
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
 
 </LinearLayout>

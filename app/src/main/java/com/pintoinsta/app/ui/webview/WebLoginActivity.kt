@@ -311,23 +311,67 @@ class WebLoginActivity : AppCompatActivity() {
             }
         }
 
-        val startUrl = if (platform == PLATFORM_PINTEREST) {
-            "https://www.pinterest.com/login/"
-        } else {
-            "https://www.instagram.com/accounts/login/"
-        }
+        lifecycleScope.launch {
+            var targetAccountCookies = ""
+            var targetUsername = reLoginUsername
 
-        // When adding a new account, clear old guest/session cookies so the user sees a fresh login form
-        if (reLoginUsername == null) {
-            cookieManager.removeAllCookies {
-                cookieManager.flush()
-                webView.clearCache(true)
-                webView.loadUrl(startUrl)
+            if (platform == PLATFORM_PINTEREST) {
+                val accounts = repository.getAllPinterestAccounts()
+                val matched = if (!targetUsername.isNullOrBlank()) {
+                    accounts.find { it.username.equals(targetUsername, ignoreCase = true) }
+                } else {
+                    accounts.firstOrNull { it.cookies.contains("_pinterest_sess=") }
+                }
+                if (matched != null && matched.cookies.isNotBlank()) {
+                    targetAccountCookies = matched.cookies
+                    targetUsername = matched.username
+                }
+            } else {
+                val accounts = repository.getAllInstagramAccounts()
+                val matched = if (!targetUsername.isNullOrBlank()) {
+                    accounts.find { it.username.equals(targetUsername, ignoreCase = true) }
+                } else {
+                    accounts.firstOrNull { it.cookies.contains("sessionid=") }
+                }
+                if (matched != null && matched.cookies.isNotBlank()) {
+                    targetAccountCookies = matched.cookies
+                    targetUsername = matched.username
+                }
+            }
+
+            val hasSession = targetAccountCookies.isNotBlank() && (
+                (platform == PLATFORM_PINTEREST && targetAccountCookies.contains("_pinterest_sess=")) ||
+                (platform == PLATFORM_INSTAGRAM && targetAccountCookies.contains("sessionid="))
+            )
+
+            val initialUrl = if (hasSession) {
+                // If account has valid session cookies, inject them and navigate to feed, NOT the login form!
+                if (platform == PLATFORM_PINTEREST) {
+                    CookieUtils.injectPinterestCookies(targetAccountCookies)
+                    "https://www.pinterest.com/"
+                } else {
+                    CookieUtils.injectInstagramCookies(targetAccountCookies)
+                    "https://www.instagram.com/"
+                }
+            } else {
+                // Only if there is no session to restore and user clicked add, clear cache and load login form
+                if (!isFromCard) {
+                    cookieManager.removeAllCookies(null)
+                    cookieManager.flush()
+                    webView.clearCache(true)
+                }
+                if (platform == PLATFORM_PINTEREST) {
+                    "https://www.pinterest.com/login/"
+                } else {
+                    "https://www.instagram.com/accounts/login/"
+                }
+            }
+
+            Log.d(TAG, "WebLoginActivity loading $initialUrl with hasSession=$hasSession (user: $targetUsername)")
+            webView.loadUrl(initialUrl)
+            if (platform == PLATFORM_PINTEREST) {
                 startPinterestProfilePoller()
             }
-        } else {
-            webView.loadUrl(startUrl)
-            startPinterestProfilePoller()
         }
     }
 
@@ -344,10 +388,10 @@ class WebLoginActivity : AppCompatActivity() {
         return if (platform == PLATFORM_PINTEREST) {
             // Must NOT be on login, signup, or Google auth URL
             val onAuthPage = cleanUrl.contains("/login") || cleanUrl.contains("/signup") || cleanUrl.contains("/register") || cleanUrl.contains("accounts.google.com")
-            // Pinterest logged-in session MUST have _auth=1 (guests have _auth=0) and _pinterest_sess
-            val hasAuth = cookies.contains("_auth=1")
+            // Pinterest logged-in session has _pinterest_sess cookie and is not on auth page
             val hasSess = cookies.contains("_pinterest_sess=")
-            !onAuthPage && hasAuth && hasSess
+            val hasAuth = cookies.contains("_auth=1") || !cookies.contains("_auth=0")
+            !onAuthPage && hasSess && hasAuth
         } else {
             // Instagram: Must NOT be on login or Google auth URL
             val onAuthPage = cleanUrl.contains("/accounts/login") || cleanUrl.contains("/accounts/emailsignup") || cleanUrl.contains("/accounts/onetap") || cleanUrl.contains("accounts.google.com")

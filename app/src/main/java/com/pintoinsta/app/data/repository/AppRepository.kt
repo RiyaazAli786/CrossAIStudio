@@ -552,7 +552,7 @@ class AppRepository(private val context: Context) {
 
                 if (!postResult.success) {
                     Log.w(TAG, "Initial video upload warning: ${postResult.message}. Retrying once...")
-                    delay(2000L)
+                    delay(3000L)
                     postResult = instagramClient.postVideo(
                         account = instaAccount,
                         videoBytes = videoBytes,
@@ -564,12 +564,24 @@ class AppRepository(private val context: Context) {
                     )
                 }
             } else {
-                Log.w(TAG, "Could not obtain video for Pin ${pin.pinId}, falling back to image posting")
+                val err = "Could not obtain video for Pin ${pin.pinId}"
+                Log.e(TAG, err)
+                dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
+                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, err)
+                return@withContext Pair(false, err)
             }
-        }
 
-        // If not a video pin or if video posting failed, post as photo
-        if (postResult == null || !postResult.success) {
+            // CRITICAL FIX: If this is a video pin, NEVER fall back to posting a photo!
+            // Falling back causes double posts (first the video, then the image for the exact same video).
+            if (postResult == null || !postResult.success) {
+                val err = postResult?.message ?: "Reel video upload failed for Pin ${pin.pinId}"
+                Log.e(TAG, err)
+                dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
+                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, err)
+                return@withContext Pair(false, err)
+            }
+        } else {
+            // For standard photo pins, post as photo
             val imageUrl = pin.getEffectiveImageUrl()
             if (imageUrl.isBlank()) {
                 val err = "No valid media format found for Pin ${pin.pinId} (media: ${pin.mediaType})"
@@ -1147,6 +1159,13 @@ class AppRepository(private val context: Context) {
 
                 if (rawCookies.isBlank()) return false
 
+                // Crucial fix: Pinterest considers account logged in ONLY if _auth=1 is present!
+                if (rawCookies.contains("_auth=0") && (rawCookies.contains("_pinterest_sess=") || rawSession.isNotBlank())) {
+                    rawCookies = rawCookies.replace("_auth=0", "_auth=1")
+                } else if (!rawCookies.contains("_auth=")) {
+                    rawCookies = "$rawCookies; _auth=1"
+                }
+
                 val resolvedCsrf = csrf.ifBlank { CookieUtils.extractCookieValue(rawCookies, "csrftoken") }
 
                 val account = PinterestAccount(
@@ -1161,8 +1180,8 @@ class AppRepository(private val context: Context) {
                 )
                 dbHelper.insertOrUpdatePinterestAccount(account)
 
-                // Inject into CookieManager so WebViews and API calls are immediately authenticated
-                CookieUtils.injectCookies("https://www.pinterest.com", rawCookies)
+                // Inject into CookieManager across all Pinterest subdomains
+                CookieUtils.injectPinterestCookies(rawCookies)
                 return true
             }
 

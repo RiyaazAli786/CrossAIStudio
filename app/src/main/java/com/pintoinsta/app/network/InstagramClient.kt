@@ -572,28 +572,65 @@ class InstagramClient(
             put("audio_muted", false)
         }
 
-        // Attempt configure_to_clips first (Instagram Reels)
-        var configReq = Request.Builder()
-            .url(configureClipsUrl)
-            .post(clipsJsonPayload.toString().toByteArray(Charsets.UTF_8).toRequestBody("application/json; charset=utf-8".toMediaType()))
-            .header("Host", "www.instagram.com")
-            .header("User-Agent", DEFAULT_USER_AGENT)
-            .header("Origin", "https://www.instagram.com")
-            .header("Referer", "https://www.instagram.com/")
-            .header("Content-Type", "application/json; charset=utf-8")
-            .header("X-Instagram-AJAX", "1")
-            .header("X-CSRFToken", csrf)
-            .header("X-IG-App-ID", IG_APP_ID)
-            .header("X-Requested-With", "XMLHttpRequest")
-            .header("Cookie", account.cookies)
-            .build()
+        // Allow Instagram's backend ingestion server time to start processing video transcode
+        try {
+            Thread.sleep(4000L)
+        } catch (_: InterruptedException) {}
 
-        var configRes = client.newCall(configReq).execute()
-        var configBody = configRes.body?.string() ?: ""
-        Log.d(TAG, "Configure to clips response HTTP ${configRes.code}: $configBody")
+        // Step 4: Configure Video / Reel with polling retry for transcode completion
+        var configRes: okhttp3.Response? = null
+        var configBody = ""
+        val maxConfigureAttempts = 5
 
-        // Secondary fallback: media/configure with FormBody
-        if (!configRes.isSuccessful || !configBody.contains("\"status\":\"ok\"")) {
+        for (attempt in 1..maxConfigureAttempts) {
+            val configReq = Request.Builder()
+                .url(configureClipsUrl)
+                .post(clipsJsonPayload.toString().toByteArray(Charsets.UTF_8).toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .header("Host", "www.instagram.com")
+                .header("User-Agent", DEFAULT_USER_AGENT)
+                .header("Origin", "https://www.instagram.com")
+                .header("Referer", "https://www.instagram.com/")
+                .header("Content-Type", "application/json; charset=utf-8")
+                .header("X-Instagram-AJAX", "1")
+                .header("X-CSRFToken", csrf)
+                .header("X-IG-App-ID", IG_APP_ID)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .header("Cookie", account.cookies)
+                .build()
+
+            try {
+                configRes?.close()
+                configRes = client.newCall(configReq).execute()
+                configBody = configRes?.body?.string() ?: ""
+                Log.d(TAG, "Configure to clips (attempt $attempt/$maxConfigureAttempts) HTTP ${configRes?.code}: $configBody")
+
+                if (configRes != null && configRes!!.isSuccessful && configBody.contains("\"status\":\"ok\"")) {
+                    break
+                }
+
+                // If transcode is still in progress, wait and retry
+                val isTranscoding = configBody.contains("transcode", ignoreCase = true) ||
+                        configBody.contains("processing", ignoreCase = true) ||
+                        configBody.contains("wait", ignoreCase = true) ||
+                        configRes?.code == 202
+
+                if (isTranscoding && attempt < maxConfigureAttempts) {
+                    Log.d(TAG, "Instagram video transcode in progress. Waiting 3s before retry #$attempt...")
+                    Thread.sleep(3000L)
+                } else if (!isTranscoding && !configBody.contains("\"status\":\"ok\"")) {
+                    // Non-transcode error or rate limit, break out to general configure
+                    break
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Configure to clips attempt $attempt error: ${e.message}")
+                if (attempt < maxConfigureAttempts) {
+                    Thread.sleep(3000L)
+                }
+            }
+        }
+
+        // Secondary fallback: media/configure with FormBody if configure_to_clips didn't return ok
+        if (configRes == null || !configRes!!.isSuccessful || !configBody.contains("\"status\":\"ok\"")) {
             val formBody = FormBody.Builder(Charsets.UTF_8)
                 .add("upload_id", uploadId)
                 .add("caption", cleanCaption)
@@ -604,7 +641,7 @@ class InstagramClient(
                 .add("video_result", "")
                 .build()
 
-            configReq = Request.Builder()
+            val generalConfigReq = Request.Builder()
                 .url(configureGeneralUrl)
                 .post(formBody)
                 .header("Host", "www.instagram.com")
@@ -619,19 +656,22 @@ class InstagramClient(
                 .build()
 
             try {
-                val fallbackRes = client.newCall(configReq).execute()
+                val fallbackRes = client.newCall(generalConfigReq).execute()
                 val fallbackBody = fallbackRes.body?.string() ?: ""
                 Log.d(TAG, "Configure general response HTTP ${fallbackRes.code}: $fallbackBody")
                 if (fallbackRes.isSuccessful && fallbackBody.contains("\"status\":\"ok\"")) {
+                    configRes?.close()
                     configRes = fallbackRes
                     configBody = fallbackBody
+                } else {
+                    fallbackRes.close()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "General video configure error: ${e.message}")
             }
         }
 
-        return if (configRes.isSuccessful && configBody.contains("\"status\":\"ok\"")) {
+        return if (configRes != null && configRes!!.isSuccessful && configBody.contains("\"status\":\"ok\"")) {
             var postUrl: String? = null
             try {
                 val json = JSONObject(configBody)

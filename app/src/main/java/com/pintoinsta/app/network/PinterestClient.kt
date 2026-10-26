@@ -214,9 +214,14 @@ class PinterestClient(
      */
     fun checkAccountStatus(account: PinterestAccount): Pair<Boolean, String> {
         return try {
-            val cookies = account.cookies
-            if (!cookies.contains("_auth=1")) {
-                return Pair(false, "Session Expired (Not Logged In)")
+            var cookies = account.cookies
+            if (!cookies.contains("_pinterest_sess=")) {
+                return Pair(false, "Session Expired (No Session Cookie)")
+            }
+            if (!cookies.contains("_auth=")) {
+                cookies = "$cookies; _auth=1"
+            } else if (cookies.contains("_auth=0")) {
+                cookies = cookies.replace("_auth=0", "_auth=1")
             }
 
             val csrf = account.csrfToken.ifEmpty { extractCsrfFromCookies(cookies) }

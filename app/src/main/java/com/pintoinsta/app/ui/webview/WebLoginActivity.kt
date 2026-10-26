@@ -13,11 +13,14 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import com.pintoinsta.app.data.model.InstagramAccount
 import com.pintoinsta.app.data.model.PinterestAccount
 import com.pintoinsta.app.data.repository.AppRepository
@@ -36,9 +39,6 @@ class WebLoginActivity : AppCompatActivity() {
         const val EXTRA_RE_LOGIN_USERNAME = "extra_re_login_username"
         const val PLATFORM_PINTEREST = "PINTEREST"
         const val PLATFORM_INSTAGRAM = "INSTAGRAM"
-
-        private const val USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     }
 
     private lateinit var binding: ActivityWebLoginBinding
@@ -47,6 +47,7 @@ class WebLoginActivity : AppCompatActivity() {
     private var reLoginUsername: String? = null
     private var isSessionCaptured = false
     private var isCapturing = false
+    private var cleanUserAgent = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,6 +70,7 @@ class WebLoginActivity : AppCompatActivity() {
 
         setupToolbar()
         setupWebView()
+        setupBackNavigation()
 
         binding.btnCaptureSession.setOnClickListener {
             handleManualGrabClick()
@@ -82,18 +84,74 @@ class WebLoginActivity : AppCompatActivity() {
         binding.toolbar.setNavigationOnClickListener { finish() }
     }
 
+    private fun setupBackNavigation() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (binding.webView.canGoBack()) {
+                    binding.webView.goBack()
+                } else {
+                    finish()
+                }
+            }
+        })
+    }
+
+    /**
+     * Resolves Google's "This browser or app may not be secure" error by:
+     * 1. Removing '; wv' (embedded WebView identifier) and 'Version/4.0' from the user-agent
+     * 2. Preserving the exact device model, Android OS version, and Chrome version
+     * 3. Matching Android platform fingerprints so Google detects a genuine Chrome Mobile browser
+     */
+    private fun resolveCleanMobileUserAgent(settings: WebSettings): String {
+        val defaultUa = try {
+            WebSettings.getDefaultUserAgent(this)
+        } catch (e: Exception) {
+            settings.userAgentString
+        }
+
+        val clean = defaultUa
+            .replace("; wv", "")
+            .replace("Version/4.0 ", "")
+            .replace(";wv", "")
+
+        return if (clean.contains("Chrome/")) {
+            clean
+        } else {
+            "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         val webView = binding.webView
         val settings = webView.settings
+
+        cleanUserAgent = resolveCleanMobileUserAgent(settings)
+        settings.userAgentString = cleanUserAgent
 
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-        settings.userAgentString = USER_AGENT
+        settings.setSupportZoom(true)
+        settings.builtInZoomControls = true
+        settings.displayZoomControls = false
+
+        // Required for Google OAuth and 3rd-party social logins:
+        // Enables window.open popups used by Google Sign-In and Facebook Sign-In buttons
+        settings.setSupportMultipleWindows(true)
+        settings.javaScriptCanOpenWindowsAutomatically = true
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+
+        // Suppress 'X-Requested-With' header to prevent Google from identifying the client as an embedded app
+        try {
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+                WebSettingsCompat.setRequestedWithHeaderOriginAllowList(settings, emptySet())
+            }
+        } catch (e: Throwable) {
+            // Feature not available on older WebView engines; handled by clean user-agent
+        }
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
@@ -108,12 +166,31 @@ class WebLoginActivity : AppCompatActivity() {
                     binding.progressBar.visibility = View.GONE
                 }
             }
+
+            // Handle OAuth popup windows (e.g. "Continue with Google" popup) inside the webview
+            override fun onCreateWindow(
+                view: WebView?,
+                isDialog: Boolean,
+                isUserGesture: Boolean,
+                resultMsg: android.os.Message?
+            ): Boolean {
+                val transport = resultMsg?.obj as? WebView.WebViewTransport
+                if (transport != null) {
+                    transport.webView = binding.webView
+                    resultMsg.sendToTarget()
+                    return true
+                }
+                return super.onCreateWindow(view, isDialog, isUserGesture, resultMsg)
+            }
         }
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                // Never auto-capture on page start - wait for page to finish loading and user to log in
+                // Ensure the clean mobile User-Agent is retained across Google auth domains
+                if (url != null && (url.contains("accounts.google.com") || url.contains("google.com/signin"))) {
+                    view?.settings?.userAgentString = cleanUserAgent
+                }
                 updateStatusMessage(url)
             }
 
@@ -129,6 +206,7 @@ class WebLoginActivity : AppCompatActivity() {
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                // Allow Google OAuth and all redirect URLs to execute smoothly in the webview
                 return false
             }
         }
@@ -165,15 +243,15 @@ class WebLoginActivity : AppCompatActivity() {
     private fun isUserLoggedIn(url: String?, cookies: String): Boolean {
         val cleanUrl = url?.lowercase() ?: ""
         return if (platform == PLATFORM_PINTEREST) {
-            // Must NOT be on login or signup URL
-            val onAuthPage = cleanUrl.contains("/login") || cleanUrl.contains("/signup") || cleanUrl.contains("/register")
+            // Must NOT be on login, signup, or Google auth URL
+            val onAuthPage = cleanUrl.contains("/login") || cleanUrl.contains("/signup") || cleanUrl.contains("/register") || cleanUrl.contains("accounts.google.com")
             // Pinterest logged-in session MUST have _auth=1 (guests have _auth=0) and _pinterest_sess
             val hasAuth = cookies.contains("_auth=1")
             val hasSess = cookies.contains("_pinterest_sess=")
             !onAuthPage && hasAuth && hasSess
         } else {
-            // Instagram: Must NOT be on login URL
-            val onAuthPage = cleanUrl.contains("/accounts/login") || cleanUrl.contains("/accounts/emailsignup") || cleanUrl.contains("/accounts/onetap")
+            // Instagram: Must NOT be on login or Google auth URL
+            val onAuthPage = cleanUrl.contains("/accounts/login") || cleanUrl.contains("/accounts/emailsignup") || cleanUrl.contains("/accounts/onetap") || cleanUrl.contains("accounts.google.com")
             val hasSessionId = cookies.contains("sessionid=")
             val dsUserId = extractCookieValue(cookies, "ds_user_id")
             !onAuthPage && hasSessionId && dsUserId.isNotEmpty() && dsUserId != "0"
@@ -182,9 +260,14 @@ class WebLoginActivity : AppCompatActivity() {
 
     private fun updateStatusMessage(url: String?) {
         val cleanUrl = url?.lowercase() ?: ""
+        if (cleanUrl.contains("accounts.google.com")) {
+            binding.tvLoginStatus.text = "Google Sign-In: Enter your Google credentials..."
+            return
+        }
+
         if (platform == PLATFORM_PINTEREST) {
             if (cleanUrl.contains("/login") || cleanUrl.contains("/signup")) {
-                binding.tvLoginStatus.text = "Please enter your Pinterest credentials and log in below..."
+                binding.tvLoginStatus.text = "Please log in with email/password or Continue with Google below..."
             } else {
                 binding.tvLoginStatus.text = "Please log in to your account. Session will be captured once logged in."
             }
@@ -246,7 +329,7 @@ class WebLoginActivity : AppCompatActivity() {
                 val client = OkHttpClient()
                 val req = Request.Builder()
                     .url("https://www.pinterest.com/resource/UserSettingsResource/get/")
-                    .header("User-Agent", USER_AGENT)
+                    .header("User-Agent", cleanUserAgent)
                     .header("Cookie", cookies)
                     .header("Accept", "application/json, text/javascript, */*; q=0.01")
                     .header("x-requested-with", "XMLHttpRequest")
@@ -312,7 +395,7 @@ class WebLoginActivity : AppCompatActivity() {
                 val client = OkHttpClient()
                 val req = Request.Builder()
                     .url("https://i.instagram.com/api/v1/accounts/current_user/?edit=true")
-                    .header("User-Agent", USER_AGENT)
+                    .header("User-Agent", cleanUserAgent)
                     .header("Cookie", cookies)
                     .header("X-IG-App-ID", "936619743392459")
                     .header("X-CSRFToken", csrfToken)
@@ -340,7 +423,7 @@ class WebLoginActivity : AppCompatActivity() {
                     val client = OkHttpClient()
                     val req = Request.Builder()
                         .url("https://i.instagram.com/api/v1/users/$dsUserId/info/")
-                        .header("User-Agent", USER_AGENT)
+                        .header("User-Agent", cleanUserAgent)
                         .header("Cookie", cookies)
                         .header("X-IG-App-ID", "936619743392459")
                         .header("X-CSRFToken", csrfToken)

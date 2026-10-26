@@ -87,4 +87,7 @@ dependencies {
 
     // Coil for modern image loading
     implementation 'io.coil-kt:coil:2.6.0'
+
+    // AndroidX WebKit for advanced WebView features and header management
+    implementation 'androidx.webkit:webkit:1.12.0'
 }

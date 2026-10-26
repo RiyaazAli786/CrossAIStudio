@@ -197,7 +197,7 @@ class SettingsFragment : Fragment() {
                 }
                 Toast.makeText(
                     requireContext(),
-                    "Accounts exported successfully to file!",
+                    "Accounts backup & session tokens exported successfully to file!",
                     Toast.LENGTH_LONG
                 ).show()
             } catch (e: Exception) {
@@ -216,7 +216,7 @@ class SettingsFragment : Fragment() {
                 val jsonString = repository.exportAccountsJson()
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "application/json"
-                    putExtra(Intent.EXTRA_SUBJECT, "CrossAIStudio Accounts Backup")
+                    putExtra(Intent.EXTRA_SUBJECT, "CrossAIStudio Accounts & Sessions Backup")
                     putExtra(Intent.EXTRA_TEXT, jsonString)
                 }
                 startActivity(Intent.createChooser(shareIntent, "Share Accounts Backup"))
@@ -240,7 +240,7 @@ class SettingsFragment : Fragment() {
                 clipboard.setPrimaryClip(clip)
                 Toast.makeText(
                     requireContext(),
-                    "Accounts backup copied to clipboard!",
+                    "Accounts backup with session tokens copied to clipboard!",
                     Toast.LENGTH_SHORT
                 ).show()
             } catch (e: Exception) {

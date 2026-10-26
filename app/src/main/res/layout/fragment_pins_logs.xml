@@ -26,6 +26,18 @@
             android:textStyle="bold" />
 
         <ImageButton
+            android:id="@+id/btnClearLogs"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_marginEnd="6dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Clear Activity Logs"
+            android:padding="7dp"
+            android:src="@drawable/ic_delete"
+            android:visibility="gone"
+            app:tint="@color/status_red" />
+
+        <ImageButton
             android:id="@+id/btnRefresh"
             android:layout_width="38dp"
             android:layout_height="38dp"
@@ -35,13 +47,14 @@
             app:tint="@color/text_primary" />
     </LinearLayout>
 
-    <!-- Segmented tabs: Saved Pins vs Logs -->
+    <!-- Top Segmented tabs: Saved Pins vs Logs -->
     <com.google.android.material.button.MaterialButtonToggleGroup
         android:id="@+id/toggleGroup"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="16dp"
-        android:layout_marginVertical="8dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="6dp"
         app:checkedButton="@id/btnTabPins"
         app:selectionRequired="true"
         app:singleSelection="true">
@@ -65,6 +78,121 @@
             android:textSize="13sp" />
     </com.google.android.material.button.MaterialButtonToggleGroup>
 
+    <!-- Sub-tabs row inside Saved Pins: Saved (Pending) vs Published -->
+    <LinearLayout
+        android:id="@+id/layoutSubTabs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/toggleSubTabs"
+            android:layout_width="0dp"
+            android:layout_height="38dp"
+            android:layout_weight="1"
+            app:checkedButton="@id/btnSubSaved"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSubSaved"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="Saved (0)"
+                android:textSize="12sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSubPublished"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="Published (0)"
+                android:textSize="12sp" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSelectMode"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:layout_marginStart="8dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:text="Select"
+            android:textColor="@color/primary"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Bulk Selection Action Bar -->
+    <LinearLayout
+        android:id="@+id/layoutSelectionBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="6dp"
+        android:background="@drawable/bg_search_chip"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="4dp"
+        android:visibility="gone">
+
+        <CheckBox
+            android:id="@+id/cbSelectAll"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:buttonTint="@color/primary"
+            android:text="All"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvSelectedCount"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="0 selected"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnBulkDelete"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:backgroundTint="@color/status_red"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:text="Delete"
+            android:textColor="@color/white"
+            android:textSize="12sp"
+            app:icon="@drawable/ic_delete"
+            app:iconSize="14dp"
+            app:iconTint="@color/white" />
+
+        <ImageButton
+            android:id="@+id/btnCloseSelection"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Cancel selection"
+            android:src="@drawable/ic_close"
+            app:tint="@color/text_secondary" />
+    </LinearLayout>
+
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -76,7 +204,7 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:clipToPadding="false"
-            android:paddingVertical="6dp" />
+            android:paddingVertical="4dp" />
 
         <!-- Logs List -->
         <androidx.recyclerview.widget.RecyclerView
@@ -84,7 +212,7 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:clipToPadding="false"
-            android:paddingVertical="6dp"
+            android:paddingVertical="4dp"
             android:visibility="gone" />
 
         <!-- Empty State -->

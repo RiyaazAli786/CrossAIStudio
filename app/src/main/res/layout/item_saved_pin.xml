@@ -7,7 +7,7 @@
     android:layout_marginHorizontal="12dp"
     android:layout_marginVertical="6dp"
     app:cardBackgroundColor="@color/surface_card"
-    app:cardCornerRadius="12dp"
+    app:cardCornerRadius="14dp"
     app:cardElevation="1dp"
     app:strokeColor="@color/divider"
     app:strokeWidth="1dp">
@@ -15,15 +15,35 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center_vertical"
+        android:gravity="top"
         android:orientation="horizontal"
         android:padding="12dp">
 
-        <FrameLayout
+        <!-- Selection CheckBox (shown in selection mode) -->
+        <CheckBox
+            android:id="@+id/cbSelectPin"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:layout_marginEnd="6dp"
+            android:buttonTint="@color/primary"
+            android:clickable="false"
+            android:focusable="false"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <!-- Pin Thumbnail with rounded corners and play overlay -->
+        <com.google.android.material.card.MaterialCardView
             android:id="@+id/layoutPinThumb"
-            android:layout_width="64dp"
-            android:layout_height="80dp"
-            android:foreground="?attr/selectableItemBackground">
+            android:layout_width="72dp"
+            android:layout_height="96dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
+            app:cardCornerRadius="10dp"
+            app:cardElevation="0dp"
+            app:strokeColor="@color/divider"
+            app:strokeWidth="1dp">
 
             <ImageView
                 android:id="@+id/ivPinThumb"
@@ -35,17 +55,19 @@
 
             <ImageView
                 android:id="@+id/ivPlayOverlay"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
                 android:layout_gravity="center"
                 android:background="@drawable/bg_search_chip"
                 android:contentDescription="Play video"
-                android:padding="5dp"
+                android:padding="6dp"
                 android:src="@drawable/ic_play"
                 android:visibility="gone"
-                app:tint="@color/white" />
-        </FrameLayout>
+                app:tint="@color/white"
+                tools:visibility="visible" />
+        </com.google.android.material.card.MaterialCardView>
 
+        <!-- Main Details Column -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -53,63 +75,108 @@
             android:layout_weight="1"
             android:orientation="vertical">
 
+            <!-- Header Row: Status Badge on left, Action Buttons on right -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <TextView
-                    android:id="@+id/tvPinId"
+                <FrameLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textColor="@color/primary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    tools:text="ID: 585327282865248467" />
+                    android:layout_weight="1">
 
-                <TextView
-                    android:id="@+id/tvPinStatus"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/bg_badge_active"
-                    android:text="Posted"
-                    android:textColor="@color/status_green"
-                    android:textSize="10sp"
-                    android:textStyle="bold" />
+                    <TextView
+                        android:id="@+id/tvPinStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_badge_active"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:singleLine="true"
+                        android:textColor="@color/status_green"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        tools:text="Published on @crossaistudio" />
+                </FrameLayout>
+
+                <ImageButton
+                    android:id="@+id/btnOpenReel"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_marginStart="4dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="View Reel"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_open_in_new"
+                    android:visibility="gone"
+                    app:tint="@color/secondary"
+                    tools:visibility="visible" />
+
+                <ImageButton
+                    android:id="@+id/btnDeletePin"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_marginStart="2dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Delete Pin"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_delete"
+                    app:tint="@color/status_red" />
             </LinearLayout>
 
+            <!-- Caption / Title -->
             <TextView
                 android:id="@+id/tvPinCaption"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="6dp"
                 android:ellipsize="end"
+                android:lineSpacingExtra="2dp"
                 android:maxLines="2"
                 android:textColor="@color/text_primary"
                 android:textSize="13sp"
-                tools:text="Funny cartoon animated video moment #comedy" />
+                android:textStyle="bold"
+                tools:text="&quot;Dad said he spotted a beautiful girl... but the jungle...&quot;" />
 
+            <!-- Search Keyword & Media Type -->
             <TextView
                 android:id="@+id/tvSearchKeyword"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:singleLine="true"
                 android:textColor="@color/text_muted"
                 android:textSize="11sp"
-                tools:text="Search: funny cartoon video" />
+                tools:text="Keyword: animated comedy short • VIDEO" />
 
+            <!-- Pin ID -->
+            <TextView
+                android:id="@+id/tvPinId"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:singleLine="true"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp"
+                tools:text="Pin ID: 1097541371722680163" />
+
+            <!-- Publish Now Button (Pending only) -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnPublishPin"
                 style="@style/Widget.Material3.Button.TonalButton"
                 android:layout_width="wrap_content"
                 android:layout_height="32dp"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="8dp"
                 android:backgroundTint="@color/pinterest_red"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
-                android:paddingHorizontal="12dp"
+                android:paddingHorizontal="14dp"
                 android:text="Publish Now"
                 android:textColor="@color/on_primary"
                 android:textSize="11sp"
@@ -119,31 +186,67 @@
                 app:iconGravity="textStart"
                 app:iconSize="14dp"
                 app:iconTint="@color/on_primary" />
+
+            <!-- Published Reel / Post URL Container (visible when isPosted) -->
+            <LinearLayout
+                android:id="@+id/layoutReelUrl"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_search_chip"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="8dp"
+                android:paddingEnd="4dp"
+                android:paddingVertical="4dp"
+                android:visibility="gone"
+                tools:visibility="visible">
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:contentDescription="Instagram Reel"
+                    android:src="@drawable/ic_instagram"
+                    app:tint="@color/instagram_pink" />
+
+                <TextView
+                    android:id="@+id/tvReelUrl"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="1"
+                    android:ellipsize="middle"
+                    android:maxLines="1"
+                    android:singleLine="true"
+                    android:textColor="@color/secondary"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    tools:text="https://www.instagram.com/reel/C8abc123/" />
+
+                <!-- Copy Reel URL Button -->
+                <ImageButton
+                    android:id="@+id/btnCopyReelUrl"
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Copy Reel URL"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_copy"
+                    app:tint="@color/text_secondary" />
+
+                <!-- Navigate / Open Reel Button -->
+                <ImageButton
+                    android:id="@+id/btnNavigateReelUrl"
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Open Reel"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_open_in_new"
+                    app:tint="@color/primary" />
+            </LinearLayout>
         </LinearLayout>
-
-        <ImageButton
-            android:id="@+id/btnOpenReel"
-            android:layout_width="38dp"
-            android:layout_height="38dp"
-            android:layout_marginStart="6dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="View Reel"
-            android:padding="7dp"
-            android:src="@drawable/ic_open_in_new"
-            android:visibility="gone"
-            app:tint="@color/secondary"
-            tools:visibility="visible" />
-
-        <ImageButton
-            android:id="@+id/btnDeletePin"
-            android:layout_width="38dp"
-            android:layout_height="38dp"
-            android:layout_marginStart="4dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Delete Pin"
-            android:padding="7dp"
-            android:src="@drawable/ic_delete"
-            app:tint="@color/status_red" />
 
     </LinearLayout>
 

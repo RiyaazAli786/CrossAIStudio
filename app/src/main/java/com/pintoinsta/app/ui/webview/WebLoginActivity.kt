@@ -27,6 +27,7 @@ import com.pintoinsta.app.data.model.PinterestAccount
 import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.databinding.ActivityWebLoginBinding
 import com.pintoinsta.app.worker.ScheduleManager
+import com.pintoinsta.app.util.CookieUtils
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -331,13 +332,10 @@ class WebLoginActivity : AppCompatActivity() {
     }
 
     private fun getPlatformCookies(): String {
-        val cookieManager = CookieManager.getInstance()
         return if (platform == PLATFORM_PINTEREST) {
-            val main = cookieManager.getCookie("https://www.pinterest.com") ?: ""
-            val localized = cookieManager.getCookie("https://in.pinterest.com") ?: ""
-            if (main.isNotEmpty()) main else localized
+            CookieUtils.getLivePinterestCookies()
         } else {
-            cookieManager.getCookie("https://www.instagram.com") ?: ""
+            CookieUtils.getLiveInstagramCookies()
         }
     }
 

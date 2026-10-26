@@ -13,6 +13,11 @@ import com.pintoinsta.app.network.InstagramClient
 import com.pintoinsta.app.network.PinterestClient
 import com.pintoinsta.app.notification.NotificationHelper
 import com.pintoinsta.app.util.InstagramCaptionUtils
+import com.pintoinsta.app.util.VideoMuxerUtils
+import com.pintoinsta.app.util.CookieUtils
+import android.media.MediaMetadataRetriever
+import android.webkit.CookieManager
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -20,7 +25,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.random.Random
 
-class AppRepository(context: Context) {
+class AppRepository(private val context: Context) {
 
     private val dbHelper = AppDatabaseHelper.getInstance(context)
     private val pinterestClient = PinterestClient()
@@ -230,6 +235,10 @@ class AppRepository(context: Context) {
     suspend fun deleteSavedPin(pinId: String): Boolean = withContext(Dispatchers.IO) {
         val deleted = dbHelper.deleteSavedPin(pinId) > 0
         if (deleted) {
+            try {
+                val cacheDir = File(context.cacheDir, "pin_videos")
+                File(cacheDir, "pin_${pinId}.mp4").delete()
+            } catch (_: Exception) {}
             dbHelper.insertPostLog(
                 PostLog(
                     pinId = pinId,
@@ -241,9 +250,43 @@ class AppRepository(context: Context) {
         deleted
     }
 
+    suspend fun deleteSavedPins(
+        pinIds: List<String>,
+        onProgress: ((current: Int, total: Int) -> Unit)? = null
+    ): Int = withContext(Dispatchers.IO) {
+        var count = 0
+        val total = pinIds.size
+        val cacheDir = File(context.cacheDir, "pin_videos")
+        for ((idx, pinId) in pinIds.withIndex()) {
+            if (dbHelper.deleteSavedPin(pinId) > 0) {
+                count++
+            }
+            try {
+                File(cacheDir, "pin_${pinId}.mp4").delete()
+            } catch (_: Exception) {}
+            withContext(Dispatchers.Main) {
+                onProgress?.invoke(idx + 1, total)
+            }
+        }
+        if (count > 0) {
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "BATCH",
+                    status = "INFO",
+                    message = "Bulk deleted $count saved pins"
+                )
+            )
+        }
+        count
+    }
+
     // --- LOGS ---
     suspend fun getRecentLogs(): List<PostLog> = withContext(Dispatchers.IO) {
         dbHelper.getRecentPostLogs(50)
+    }
+
+    suspend fun clearAllLogs(): Boolean = withContext(Dispatchers.IO) {
+        dbHelper.clearAllPostLogs() >= 0
     }
 
     suspend fun insertActivityLog(
@@ -333,6 +376,92 @@ class AppRepository(context: Context) {
      * Requirement 3 & 5: Publishes a single pin to Instagram.
      * Can be invoked manually from Pin Card ('Publish Now') or from automation loops.
      */
+    /**
+     * Downloads video media for a pin, muxing CMAF video and audio tracks if needed,
+     * producing a clean, standard MP4 file.
+     */
+    suspend fun downloadVideoForPin(pin: SavedPin): File? = withContext(Dispatchers.IO) {
+        val cacheDir = File(context.cacheDir, "pin_videos").apply { mkdirs() }
+        val outputMp4 = File(cacheDir, "pin_${pin.pinId}.mp4")
+
+        // Helper to check for genuine MP4 container (starts with 'ftyp' at offset 4)
+        fun isRealMp4(file: File): Boolean {
+            if (!file.exists() || file.length() < 1000) return false
+            return try {
+                file.inputStream().use { stream ->
+                    val header = ByteArray(12)
+                    val read = stream.read(header)
+                    if (read >= 8) {
+                        val magic = String(header, 4, 4, Charsets.US_ASCII)
+                        magic == "ftyp"
+                    } else false
+                }
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        // Fast path: cached binary MP4 is already valid
+        if (isRealMp4(outputMp4)) {
+            Log.d(TAG, "Reusing cached valid video for Pin ${pin.pinId} (${outputMp4.length()} bytes)")
+            return@withContext outputMp4
+        } else if (outputMp4.exists()) {
+            outputMp4.delete()
+        }
+
+        try {
+            val candidates = pin.getVideoTrackCandidates()
+            if (candidates.isEmpty()) {
+                Log.w(TAG, "No video track candidate URLs found for Pin ${pin.pinId}")
+                return@withContext null
+            }
+
+            var videoBytes: ByteArray? = null
+            for (url in candidates) {
+                Log.d(TAG, "Attempting video track download for Pin ${pin.pinId}: $url")
+                val bytes = instagramClient.downloadMedia(url)
+                if (bytes != null && bytes.size > 1024) {
+                    videoBytes = bytes
+                    break
+                }
+            }
+
+            if (videoBytes == null) {
+                Log.w(TAG, "Failed downloading video track from any candidate for Pin ${pin.pinId}")
+                return@withContext null
+            }
+
+            val tempVideoFile = File(cacheDir, "temp_vid_${pin.pinId}.cmfv")
+            tempVideoFile.writeBytes(videoBytes)
+
+            val audioTrackUrl = pin.getAudioTrackUrl()
+            var tempAudioFile: File? = null
+            if (!audioTrackUrl.isNullOrBlank()) {
+                Log.d(TAG, "Downloading audio track for Pin ${pin.pinId}: $audioTrackUrl")
+                val audioBytes = instagramClient.downloadMedia(audioTrackUrl)
+                if (audioBytes != null && audioBytes.isNotEmpty()) {
+                    tempAudioFile = File(cacheDir, "temp_aud_${pin.pinId}.cmfa")
+                    tempAudioFile.writeBytes(audioBytes)
+                }
+            }
+
+            val muxSuccess = VideoMuxerUtils.mux(tempVideoFile, tempAudioFile, outputMp4)
+
+            try { tempVideoFile.delete() } catch (_: Exception) {}
+            try { tempAudioFile?.delete() } catch (_: Exception) {}
+
+            if (muxSuccess && isRealMp4(outputMp4)) {
+                Log.d(TAG, "Video prepared successfully for Pin ${pin.pinId} (${outputMp4.length()} bytes)")
+                outputMp4
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error downloading/preparing video for Pin ${pin.pinId}", e)
+            null
+        }
+    }
+
     suspend fun postSinglePin(
         pin: SavedPin,
         targetInstagramAccountId: Long? = null
@@ -384,26 +513,90 @@ class AppRepository(context: Context) {
             )
         )
 
-        val imageUrl = pin.getEffectiveImageUrl()
-        if (imageUrl.isBlank()) {
-            val err = "No valid image format found for Pin ${pin.pinId} (media: ${pin.mediaType})"
-            dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
-            notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, err)
-            return@withContext Pair(false, err)
+        val isVideo = pin.isVideoPin()
+        var postResult: InstagramClient.InstagramPostResponse? = null
+
+        if (isVideo) {
+            Log.d(TAG, "Pin ${pin.pinId} is a VIDEO pin. Downloading and publishing as Reel...")
+            val videoFile = downloadVideoForPin(pin)
+            if (videoFile != null && videoFile.exists() && videoFile.length() > 1024) {
+                val videoBytes = videoFile.readBytes()
+                val coverBytes = instagramClient.downloadMedia(pin.getEffectiveImageUrl())
+
+                var durationMs = 15000L
+                var width = 720
+                var height = 1280
+                try {
+                    val retriever = MediaMetadataRetriever()
+                    retriever.setDataSource(videoFile.absolutePath)
+                    val w = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()
+                    val h = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
+                    val d = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                    if (w != null && w > 0) width = w
+                    if (h != null && h > 0) height = h
+                    if (d != null && d > 0) durationMs = d
+                    retriever.release()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Metadata extraction warning: ${e.message}")
+                }
+
+                postResult = instagramClient.postVideo(
+                    account = instaAccount,
+                    videoBytes = videoBytes,
+                    coverImageBytes = coverBytes,
+                    caption = caption,
+                    durationMs = durationMs,
+                    width = width,
+                    height = height
+                )
+
+                if (!postResult.success) {
+                    Log.w(TAG, "Initial video upload warning: ${postResult.message}. Retrying once...")
+                    delay(2000L)
+                    postResult = instagramClient.postVideo(
+                        account = instaAccount,
+                        videoBytes = videoBytes,
+                        coverImageBytes = coverBytes,
+                        caption = caption,
+                        durationMs = durationMs,
+                        width = width,
+                        height = height
+                    )
+                }
+            } else {
+                Log.w(TAG, "Could not obtain video for Pin ${pin.pinId}, falling back to image posting")
+            }
         }
 
-        val mediaBytes = instagramClient.downloadMedia(imageUrl)
-        if (mediaBytes == null || mediaBytes.isEmpty()) {
-            val err = "Failed downloading pin media from $imageUrl"
-            dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
-            notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, "Image download failed")
-            return@withContext Pair(false, err)
+        // If not a video pin or if video posting failed, post as photo
+        if (postResult == null || !postResult.success) {
+            val imageUrl = pin.getEffectiveImageUrl()
+            if (imageUrl.isBlank()) {
+                val err = "No valid media format found for Pin ${pin.pinId} (media: ${pin.mediaType})"
+                dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
+                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, err)
+                return@withContext Pair(false, err)
+            }
+
+            val mediaBytes = instagramClient.downloadMedia(imageUrl)
+            if (mediaBytes == null || mediaBytes.isEmpty()) {
+                val err = "Failed downloading pin media from $imageUrl"
+                dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
+                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, "Image download failed")
+                return@withContext Pair(false, err)
+            }
+
+            postResult = instagramClient.postPhoto(instaAccount, mediaBytes, caption)
         }
 
-        val postResult = instagramClient.postPhoto(instaAccount, mediaBytes, caption)
         if (postResult.success) {
             val postUrl = postResult.postUrl
             val targetUser = instaAccount.username
+            pin.isPosted = true
+            pin.postUrl = postUrl
+            pin.publishedTo = targetUser
+            pin.instagramAccountId = instaAccountId
+            pin.postedAt = System.currentTimeMillis()
             dbHelper.markPinAsPosted(pin.pinId, instaAccountId, postUrl = postUrl, publishedToUsername = targetUser)
             dbHelper.insertPostLog(
                 PostLog(
@@ -676,39 +869,161 @@ class AppRepository(context: Context) {
         val pinterestAccounts = dbHelper.getAllPinterestAccounts()
         val instagramAccounts = dbHelper.getAllInstagramAccounts()
 
+        // Flush live WebView cookies so CookieManager has the freshest session tokens
+        withContext(Dispatchers.Main) {
+            try {
+                CookieManager.getInstance().flush()
+            } catch (_: Exception) {}
+        }
+        val liveIgCookies = CookieUtils.getLiveInstagramCookies()
+        val livePinCookies = CookieUtils.getLivePinterestCookies()
+
         val root = JSONObject().apply {
             put("appName", "CrossAIStudio")
-            put("version", 1)
+            put("version", 2)
             put("exportedAt", System.currentTimeMillis())
 
             val pinArray = JSONArray()
+            val unifiedAccounts = JSONArray()
+            val sessionsArray = JSONArray()
+
             for (acc in pinterestAccounts) {
-                pinArray.put(JSONObject().apply {
+                // If stored cookies are empty or missing session, attempt fallback to live CookieManager
+                val effectiveCookies = if (acc.cookies.isNotBlank() && acc.cookies.contains("_pinterest_sess")) {
+                    acc.cookies
+                } else if (livePinCookies.contains("_pinterest_sess")) {
+                    CookieUtils.mergeCookies(listOf(acc.cookies, livePinCookies))
+                } else {
+                    acc.cookies
+                }
+
+                // If DB had empty/missing cookies but live cookies had them, update DB
+                if (effectiveCookies != acc.cookies && effectiveCookies.isNotBlank()) {
+                    dbHelper.insertOrUpdatePinterestAccount(acc.copy(cookies = effectiveCookies))
+                }
+
+                val sessId = CookieUtils.extractCookieValue(effectiveCookies, "_pinterest_sess")
+                val authVal = CookieUtils.extractCookieValue(effectiveCookies, "_auth").ifEmpty { "1" }
+                val csrf = acc.csrfToken.ifEmpty { CookieUtils.extractCookieValue(effectiveCookies, "csrftoken") }
+
+                val sessionDataObj = JSONObject().apply {
+                    put("_pinterest_sess", sessId)
+                    put("sessionId", sessId)
+                    put("session", sessId)
+                    put("_auth", authVal)
+                    put("csrfToken", csrf)
+                    put("cookies", effectiveCookies)
+                }
+
+                val pinObj = JSONObject().apply {
+                    put("platform", "PINTEREST")
                     put("username", acc.username)
                     put("displayName", acc.displayName)
                     put("profilePicUrl", acc.profilePicUrl)
-                    put("cookies", acc.cookies)
-                    put("csrfToken", acc.csrfToken)
+                    put("session", sessId)
+                    put("sessionId", sessId)
+                    put("session_id", sessId)
+                    put("_pinterest_sess", sessId)
+                    put("_auth", authVal)
+                    put("cookies", effectiveCookies)
+                    put("cookie", effectiveCookies)
+                    put("csrfToken", csrf)
+                    put("sessionData", sessionDataObj)
+                    put("hasActiveSession", sessId.isNotBlank())
                     put("status", acc.status)
                     put("scheduleIntervalHours", acc.scheduleIntervalHours)
                     put("isAutoPostEnabled", acc.isAutoPostEnabled)
-                })
+                    put("linkedInstagramAccountIds", acc.linkedInstagramAccountIds)
+                }
+                pinArray.put(pinObj)
+                unifiedAccounts.put(pinObj)
+
+                if (sessId.isNotBlank() || effectiveCookies.isNotBlank()) {
+                    sessionsArray.put(JSONObject().apply {
+                        put("platform", "PINTEREST")
+                        put("username", acc.username)
+                        put("session", sessId)
+                        put("sessionId", sessId)
+                        put("_pinterest_sess", sessId)
+                        put("cookies", effectiveCookies)
+                        put("csrfToken", csrf)
+                    })
+                }
             }
             put("pinterestAccounts", pinArray)
 
             val instaArray = JSONArray()
             for (acc in instagramAccounts) {
-                instaArray.put(JSONObject().apply {
+                // If stored cookies are empty or missing sessionid, attempt fallback to live CookieManager
+                val effectiveCookies = if (acc.cookies.isNotBlank() && acc.cookies.contains("sessionid")) {
+                    acc.cookies
+                } else if (liveIgCookies.contains("sessionid")) {
+                    CookieUtils.mergeCookies(listOf(acc.cookies, liveIgCookies))
+                } else {
+                    acc.cookies
+                }
+
+                if (effectiveCookies != acc.cookies && effectiveCookies.isNotBlank()) {
+                    dbHelper.insertOrUpdateInstagramAccount(acc.copy(cookies = effectiveCookies))
+                }
+
+                val sessId = CookieUtils.extractCookieValue(effectiveCookies, "sessionid")
+                val csrf = acc.csrfToken.ifEmpty { CookieUtils.extractCookieValue(effectiveCookies, "csrftoken") }
+                val dsUser = acc.dsUserId.ifEmpty { CookieUtils.extractCookieValue(effectiveCookies, "ds_user_id") }
+                val mid = CookieUtils.extractCookieValue(effectiveCookies, "mid")
+                val igDid = CookieUtils.extractCookieValue(effectiveCookies, "ig_did")
+                val rur = CookieUtils.extractCookieValue(effectiveCookies, "rur")
+
+                val sessionDataObj = JSONObject().apply {
+                    put("sessionid", sessId)
+                    put("sessionId", sessId)
+                    put("session", sessId)
+                    put("ds_user_id", dsUser)
+                    put("dsUserId", dsUser)
+                    put("csrftoken", csrf)
+                    put("csrfToken", csrf)
+                    put("mid", mid)
+                    put("ig_did", igDid)
+                    put("rur", rur)
+                    put("cookies", effectiveCookies)
+                }
+
+                val instaObj = JSONObject().apply {
+                    put("platform", "INSTAGRAM")
                     put("username", acc.username)
                     put("displayName", acc.displayName)
                     put("profilePicUrl", acc.profilePicUrl)
-                    put("cookies", acc.cookies)
-                    put("csrfToken", acc.csrfToken)
-                    put("dsUserId", acc.dsUserId)
+                    put("session", sessId)
+                    put("sessionId", sessId)
+                    put("sessionid", sessId)
+                    put("session_id", sessId)
+                    put("cookies", effectiveCookies)
+                    put("cookie", effectiveCookies)
+                    put("csrfToken", csrf)
+                    put("dsUserId", dsUser)
+                    put("sessionData", sessionDataObj)
+                    put("hasActiveSession", sessId.isNotBlank())
                     put("status", acc.status)
-                })
+                }
+                instaArray.put(instaObj)
+                unifiedAccounts.put(instaObj)
+
+                if (sessId.isNotBlank() || effectiveCookies.isNotBlank()) {
+                    sessionsArray.put(JSONObject().apply {
+                        put("platform", "INSTAGRAM")
+                        put("username", acc.username)
+                        put("session", sessId)
+                        put("sessionId", sessId)
+                        put("sessionid", sessId)
+                        put("dsUserId", dsUser)
+                        put("cookies", effectiveCookies)
+                        put("csrfToken", csrf)
+                    })
+                }
             }
             put("instagramAccounts", instaArray)
+            put("accounts", unifiedAccounts)
+            put("sessions", sessionsArray)
         }
 
         val jsonOutput = root.toString(2)
@@ -716,7 +1031,7 @@ class AppRepository(context: Context) {
             PostLog(
                 pinId = "BACKUP",
                 status = "INFO",
-                message = "Exported backup: ${pinterestAccounts.size} Pinterest and ${instagramAccounts.size} Instagram account(s)"
+                message = "Exported backup: ${pinterestAccounts.size} Pinterest and ${instagramAccounts.size} Instagram account(s) with session data"
             )
         )
         jsonOutput
@@ -726,52 +1041,190 @@ class AppRepository(context: Context) {
         var pinCount = 0
         var instaCount = 0
         try {
-            val root = JSONObject(jsonString)
+            val cleanJson = jsonString.trim()
 
-            // Import Instagram Accounts first
-            val instaArray = root.optJSONArray("instagramAccounts")
-            if (instaArray != null) {
-                for (i in 0 until instaArray.length()) {
-                    val obj = instaArray.optJSONObject(i) ?: continue
-                    val username = obj.optString("username").trim()
-                    val cookies = obj.optString("cookies").trim()
-                    if (username.isBlank() || cookies.isBlank()) continue
+            // Helper to parse and insert/update an Instagram account object
+            fun parseAndInsertInstagram(obj: JSONObject): Boolean {
+                val username = obj.optString("username").ifBlank {
+                    obj.optString("user").ifBlank { obj.optString("handle") }
+                }.trim()
+                if (username.isBlank()) return false
 
-                    val account = InstagramAccount(
-                        username = username,
-                        displayName = obj.optString("displayName", username),
-                        profilePicUrl = obj.optString("profilePicUrl", ""),
-                        cookies = cookies,
-                        csrfToken = obj.optString("csrfToken", ""),
-                        dsUserId = obj.optString("dsUserId", ""),
-                        status = obj.optString("status", "ACTIVE")
-                    )
-                    dbHelper.insertOrUpdateInstagramAccount(account)
-                    instaCount++
+                var rawCookies = obj.optString("cookies").ifBlank {
+                    obj.optString("cookie").ifBlank {
+                        obj.optJSONObject("sessionData")?.optString("cookies", "") ?: ""
+                    }
+                }.trim()
+
+                val rawSession = obj.optString("session").ifBlank {
+                    obj.optString("sessionId").ifBlank {
+                        obj.optString("sessionid").ifBlank {
+                            obj.optString("session_id").ifBlank {
+                                obj.optJSONObject("sessionData")?.optString("sessionid", "") ?: ""
+                            }
+                        }
+                    }
+                }.trim()
+
+                val dsUser = obj.optString("dsUserId").ifBlank {
+                    obj.optString("ds_user_id").ifBlank {
+                        obj.optJSONObject("sessionData")?.optString("ds_user_id", "") ?: ""
+                    }
+                }.trim()
+
+                val csrf = obj.optString("csrfToken").ifBlank {
+                    obj.optString("csrftoken").ifBlank {
+                        obj.optString("csrf_token").ifBlank {
+                            obj.optJSONObject("sessionData")?.optString("csrftoken", "") ?: ""
+                        }
+                    }
+                }.trim()
+
+                // Synthesize cookie string if only session token was provided
+                if (rawCookies.isBlank() && rawSession.isNotBlank()) {
+                    val sb = StringBuilder("sessionid=$rawSession")
+                    if (dsUser.isNotBlank()) sb.append("; ds_user_id=$dsUser")
+                    if (csrf.isNotBlank()) sb.append("; csrftoken=$csrf")
+                    rawCookies = sb.toString()
                 }
+
+                if (rawCookies.isBlank()) return false
+
+                val resolvedCsrf = csrf.ifBlank { CookieUtils.extractCookieValue(rawCookies, "csrftoken") }
+                val resolvedDsUser = dsUser.ifBlank { CookieUtils.extractCookieValue(rawCookies, "ds_user_id") }
+
+                val account = InstagramAccount(
+                    username = username,
+                    displayName = obj.optString("displayName", username),
+                    profilePicUrl = obj.optString("profilePicUrl", ""),
+                    cookies = rawCookies,
+                    csrfToken = resolvedCsrf,
+                    dsUserId = resolvedDsUser,
+                    status = obj.optString("status", "ACTIVE")
+                )
+                dbHelper.insertOrUpdateInstagramAccount(account)
+
+                // Inject into CookieManager so WebViews and API calls are immediately authenticated
+                CookieUtils.injectCookies("https://www.instagram.com", rawCookies)
+                return true
             }
 
-            // Import Pinterest Accounts
-            val pinArray = root.optJSONArray("pinterestAccounts")
-            if (pinArray != null) {
-                for (i in 0 until pinArray.length()) {
-                    val obj = pinArray.optJSONObject(i) ?: continue
-                    val username = obj.optString("username").trim()
-                    val cookies = obj.optString("cookies").trim()
-                    if (username.isBlank() || cookies.isBlank()) continue
+            // Helper to parse and insert/update a Pinterest account object
+            fun parseAndInsertPinterest(obj: JSONObject): Boolean {
+                val username = obj.optString("username").ifBlank {
+                    obj.optString("user").ifBlank { obj.optString("handle") }
+                }.trim()
+                if (username.isBlank()) return false
 
-                    val account = PinterestAccount(
-                        username = username,
-                        displayName = obj.optString("displayName", username),
-                        profilePicUrl = obj.optString("profilePicUrl", ""),
-                        cookies = cookies,
-                        csrfToken = obj.optString("csrfToken", ""),
-                        status = obj.optString("status", "ACTIVE"),
-                        scheduleIntervalHours = obj.optInt("scheduleIntervalHours", 1),
-                        isAutoPostEnabled = obj.optBoolean("isAutoPostEnabled", true)
-                    )
-                    dbHelper.insertOrUpdatePinterestAccount(account)
-                    pinCount++
+                var rawCookies = obj.optString("cookies").ifBlank {
+                    obj.optString("cookie").ifBlank {
+                        obj.optJSONObject("sessionData")?.optString("cookies", "") ?: ""
+                    }
+                }.trim()
+
+                val rawSession = obj.optString("session").ifBlank {
+                    obj.optString("sessionId").ifBlank {
+                        obj.optString("_pinterest_sess").ifBlank {
+                            obj.optJSONObject("sessionData")?.optString("_pinterest_sess", "") ?: ""
+                        }
+                    }
+                }.trim()
+
+                val csrf = obj.optString("csrfToken").ifBlank {
+                    obj.optString("csrftoken").ifBlank {
+                        obj.optString("csrf_token").ifBlank {
+                            obj.optJSONObject("sessionData")?.optString("csrftoken", "") ?: ""
+                        }
+                    }
+                }.trim()
+
+                // Synthesize cookie string if only session token was provided
+                if (rawCookies.isBlank() && rawSession.isNotBlank()) {
+                    val sb = StringBuilder("_pinterest_sess=$rawSession; _auth=1")
+                    if (csrf.isNotBlank()) sb.append("; csrftoken=$csrf")
+                    rawCookies = sb.toString()
+                }
+
+                if (rawCookies.isBlank()) return false
+
+                val resolvedCsrf = csrf.ifBlank { CookieUtils.extractCookieValue(rawCookies, "csrftoken") }
+
+                val account = PinterestAccount(
+                    username = username,
+                    displayName = obj.optString("displayName", username),
+                    profilePicUrl = obj.optString("profilePicUrl", ""),
+                    cookies = rawCookies,
+                    csrfToken = resolvedCsrf,
+                    status = obj.optString("status", "ACTIVE"),
+                    scheduleIntervalHours = obj.optInt("scheduleIntervalHours", 1),
+                    isAutoPostEnabled = obj.optBoolean("isAutoPostEnabled", true)
+                )
+                dbHelper.insertOrUpdatePinterestAccount(account)
+
+                // Inject into CookieManager so WebViews and API calls are immediately authenticated
+                CookieUtils.injectCookies("https://www.pinterest.com", rawCookies)
+                return true
+            }
+
+            if (cleanJson.startsWith("[")) {
+                // Root is a direct JSONArray
+                val array = JSONArray(cleanJson)
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    val platform = obj.optString("platform", "").uppercase()
+                    if (platform == "INSTAGRAM" || obj.has("dsUserId") || obj.has("sessionid") || obj.optString("cookies").contains("sessionid")) {
+                        if (parseAndInsertInstagram(obj)) instaCount++
+                    } else if (platform == "PINTEREST" || obj.has("_pinterest_sess") || obj.optString("cookies").contains("_pinterest_sess")) {
+                        if (parseAndInsertPinterest(obj)) pinCount++
+                    }
+                }
+            } else {
+                val root = JSONObject(cleanJson)
+
+                // 1. Process Instagram accounts array
+                val instaArray = root.optJSONArray("instagramAccounts")
+                if (instaArray != null) {
+                    for (i in 0 until instaArray.length()) {
+                        val obj = instaArray.optJSONObject(i) ?: continue
+                        if (parseAndInsertInstagram(obj)) instaCount++
+                    }
+                }
+
+                // 2. Process Pinterest accounts array
+                val pinArray = root.optJSONArray("pinterestAccounts")
+                if (pinArray != null) {
+                    for (i in 0 until pinArray.length()) {
+                        val obj = pinArray.optJSONObject(i) ?: continue
+                        if (parseAndInsertPinterest(obj)) pinCount++
+                    }
+                }
+
+                // 3. Process unified accounts array if present
+                val unifiedArray = root.optJSONArray("accounts")
+                if (unifiedArray != null) {
+                    for (i in 0 until unifiedArray.length()) {
+                        val obj = unifiedArray.optJSONObject(i) ?: continue
+                        val platform = obj.optString("platform", "").uppercase()
+                        if (platform == "INSTAGRAM") {
+                            if (parseAndInsertInstagram(obj)) instaCount++
+                        } else if (platform == "PINTEREST") {
+                            if (parseAndInsertPinterest(obj)) pinCount++
+                        }
+                    }
+                }
+
+                // 4. Process sessions array if present
+                val sessArray = root.optJSONArray("sessions")
+                if (sessArray != null) {
+                    for (i in 0 until sessArray.length()) {
+                        val obj = sessArray.optJSONObject(i) ?: continue
+                        val platform = obj.optString("platform", "").uppercase()
+                        if (platform == "INSTAGRAM") {
+                            if (parseAndInsertInstagram(obj)) instaCount++
+                        } else if (platform == "PINTEREST") {
+                            if (parseAndInsertPinterest(obj)) pinCount++
+                        }
+                    }
                 }
             }
 
@@ -779,7 +1232,7 @@ class AppRepository(context: Context) {
                 PostLog(
                     pinId = "BACKUP",
                     status = "SUCCESS",
-                    message = "Imported $pinCount Pinterest and $instaCount Instagram account(s) successfully"
+                    message = "Imported $pinCount Pinterest and $instaCount Instagram account(s) with session data successfully"
                 )
             )
 

@@ -101,6 +101,7 @@ class InstagramClient(
                 .url(url)
                 .get()
                 .header("User-Agent", DEFAULT_USER_AGENT)
+                .header("Referer", "https://www.pinterest.com/")
                 .build()
 
             val response = client.newCall(request).execute()
@@ -419,6 +420,250 @@ class InstagramClient(
             InstagramPostResponse(true, msg, postUrl)
         } else {
             InstagramPostResponse(false, "Configure failed: $configBody")
+        }
+    }
+
+    /**
+     * Requirement 5 & 7: Post Video / Reel to Instagram using GramDominator architecture
+     */
+    fun postVideo(
+        account: InstagramAccount,
+        videoBytes: ByteArray,
+        coverImageBytes: ByteArray?,
+        caption: String,
+        durationMs: Long = 15000L,
+        width: Int = 720,
+        height: Int = 1280
+    ): InstagramPostResponse {
+        val uploadId = System.currentTimeMillis().toString()
+        val csrf = account.csrfToken.ifEmpty { extractCsrfFromCookies(account.cookies) }
+
+        if (csrf.isEmpty()) {
+            return InstagramPostResponse(false, "Missing CSRF token in Instagram account cookies")
+        }
+
+        if (videoBytes.isEmpty()) {
+            return InstagramPostResponse(false, "Video bytes are empty")
+        }
+
+        Log.d(TAG, "Starting Instagram video/reel upload: uploadId=$uploadId, size=${videoBytes.size} bytes")
+
+        // Step 1: Preflight OPTIONS request for video upload
+        val videoUploadUrl = "https://i.instagram.com/rupload_igvideo/fb_uploader_$uploadId"
+        try {
+            val optionsReq = Request.Builder()
+                .url(videoUploadUrl)
+                .method("OPTIONS", null)
+                .header("Host", "i.instagram.com")
+                .header("Accept", "*/*")
+                .header("Access-Control-Request-Method", "POST")
+                .header(
+                    "Access-Control-Request-Headers",
+                    "content-type,x-entity-length,x-entity-name,x-entity-type,x-ig-app-id,x-instagram-ajax,x-instagram-rupload-params"
+                )
+                .header("Origin", "https://www.instagram.com")
+                .header("Referer", "https://www.instagram.com/")
+                .header("User-Agent", DEFAULT_USER_AGENT)
+                .build()
+
+            client.newCall(optionsReq).execute().close()
+        } catch (e: Exception) {
+            Log.w(TAG, "Video OPTIONS preflight warning: ${e.message}")
+        }
+
+        // Step 2: Upload video bytes
+        val ruploadParams = JSONObject().apply {
+            put("media_type", 2)
+            put("upload_id", uploadId)
+            put("upload_media_height", height)
+            put("upload_media_width", width)
+            put("upload_media_duration_ms", durationMs)
+            put("for_album", false)
+            put("direct_v2", false)
+        }.toString()
+
+        val videoRequestBody = videoBytes.toRequestBody("video/mp4".toMediaType())
+
+        val videoUploadReq = Request.Builder()
+            .url(videoUploadUrl)
+            .post(videoRequestBody)
+            .header("Host", "i.instagram.com")
+            .header("User-Agent", DEFAULT_USER_AGENT)
+            .header("Origin", "https://www.instagram.com")
+            .header("Referer", "https://www.instagram.com/")
+            .header("X-Instagram-Rupload-Params", ruploadParams)
+            .header("X-Instagram-AJAX", "1")
+            .header("X-CSRFToken", csrf)
+            .header("X-IG-App-ID", IG_APP_ID)
+            .header("X-Entity-Type", "video/mp4")
+            .header("X-Entity-Name", "fb_uploader_$uploadId")
+            .header("X-Entity-Length", videoBytes.size.toString())
+            .header("Offset", "0")
+            .header("Cookie", account.cookies)
+            .build()
+
+        val uploadRes = client.newCall(videoUploadReq).execute()
+        val uploadBody = uploadRes.body?.string() ?: ""
+        Log.d(TAG, "Video upload response HTTP ${uploadRes.code}: $uploadBody")
+
+        if (!uploadRes.isSuccessful || !uploadBody.contains("\"status\":\"ok\"")) {
+            return InstagramPostResponse(false, "Video upload failed: $uploadBody")
+        }
+
+        // Step 3: Upload cover photo if available
+        if (coverImageBytes != null && coverImageBytes.isNotEmpty()) {
+            val preparedCover = prepareImageForInstagram(coverImageBytes)
+            if (preparedCover != null) {
+                val coverUploadUrl = "https://i.instagram.com/rupload_igphoto/fb_uploader_${uploadId}"
+                val coverRuploadParams = JSONObject().apply {
+                    put("media_type", 2)
+                    put("upload_id", uploadId)
+                    put("upload_media_height", preparedCover.height)
+                    put("upload_media_width", preparedCover.width)
+                }.toString()
+
+                val coverRequestBody = preparedCover.bytes.toRequestBody("image/jpeg".toMediaType())
+                val coverReq = Request.Builder()
+                    .url(coverUploadUrl)
+                    .post(coverRequestBody)
+                    .header("Host", "i.instagram.com")
+                    .header("User-Agent", DEFAULT_USER_AGENT)
+                    .header("Origin", "https://www.instagram.com")
+                    .header("Referer", "https://www.instagram.com/")
+                    .header("X-Instagram-Rupload-Params", coverRuploadParams)
+                    .header("X-Instagram-AJAX", "1")
+                    .header("X-CSRFToken", csrf)
+                    .header("X-IG-App-ID", IG_APP_ID)
+                    .header("X-Entity-Type", "image/jpeg")
+                    .header("X-Entity-Name", "fb_uploader_$uploadId")
+                    .header("X-Entity-Length", preparedCover.bytes.size.toString())
+                    .header("Offset", "0")
+                    .header("Cookie", account.cookies)
+                    .build()
+
+                try {
+                    val coverRes = client.newCall(coverReq).execute()
+                    coverRes.close()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Cover photo upload warning: ${e.message}")
+                }
+            }
+        }
+
+        // Step 4: Configure Video / Reel
+        val cleanCaption = InstagramCaptionUtils.cleanAndFormatCaption(caption)
+        val configureClipsUrl = "https://www.instagram.com/api/v1/media/configure_to_clips/"
+        val configureGeneralUrl = "https://www.instagram.com/api/v1/media/configure/"
+
+        val clipsJsonPayload = JSONObject().apply {
+            put("upload_id", uploadId)
+            put("caption", cleanCaption)
+            put("clips_share_preview_to_feed", "1")
+            put("disable_comments", "0")
+            put("disable_oa_reuse", "false")
+            put("is_meta_only_post", "0")
+            put("is_unified_video", "1")
+            put("like_and_view_counts_disabled", "0")
+            put("media_share_flow", "creation_flow")
+            put("poster_frame_index", 0)
+            put("length", (durationMs / 1000).coerceAtLeast(1))
+            put("source_type", "4")
+            put("video_result", "")
+            put("audio_muted", false)
+        }
+
+        // Attempt configure_to_clips first (Instagram Reels)
+        var configReq = Request.Builder()
+            .url(configureClipsUrl)
+            .post(clipsJsonPayload.toString().toByteArray(Charsets.UTF_8).toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .header("Host", "www.instagram.com")
+            .header("User-Agent", DEFAULT_USER_AGENT)
+            .header("Origin", "https://www.instagram.com")
+            .header("Referer", "https://www.instagram.com/")
+            .header("Content-Type", "application/json; charset=utf-8")
+            .header("X-Instagram-AJAX", "1")
+            .header("X-CSRFToken", csrf)
+            .header("X-IG-App-ID", IG_APP_ID)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Cookie", account.cookies)
+            .build()
+
+        var configRes = client.newCall(configReq).execute()
+        var configBody = configRes.body?.string() ?: ""
+        Log.d(TAG, "Configure to clips response HTTP ${configRes.code}: $configBody")
+
+        // Secondary fallback: media/configure with FormBody
+        if (!configRes.isSuccessful || !configBody.contains("\"status\":\"ok\"")) {
+            val formBody = FormBody.Builder(Charsets.UTF_8)
+                .add("upload_id", uploadId)
+                .add("caption", cleanCaption)
+                .add("clips_share_preview_to_feed", "1")
+                .add("disable_comments", "0")
+                .add("is_unified_video", "1")
+                .add("source_type", "4")
+                .add("video_result", "")
+                .build()
+
+            configReq = Request.Builder()
+                .url(configureGeneralUrl)
+                .post(formBody)
+                .header("Host", "www.instagram.com")
+                .header("User-Agent", DEFAULT_USER_AGENT)
+                .header("Origin", "https://www.instagram.com")
+                .header("Referer", "https://www.instagram.com/")
+                .header("X-Instagram-AJAX", "1")
+                .header("X-CSRFToken", csrf)
+                .header("X-IG-App-ID", IG_APP_ID)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .header("Cookie", account.cookies)
+                .build()
+
+            try {
+                val fallbackRes = client.newCall(configReq).execute()
+                val fallbackBody = fallbackRes.body?.string() ?: ""
+                Log.d(TAG, "Configure general response HTTP ${fallbackRes.code}: $fallbackBody")
+                if (fallbackRes.isSuccessful && fallbackBody.contains("\"status\":\"ok\"")) {
+                    configRes = fallbackRes
+                    configBody = fallbackBody
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "General video configure error: ${e.message}")
+            }
+        }
+
+        return if (configRes.isSuccessful && configBody.contains("\"status\":\"ok\"")) {
+            var postUrl: String? = null
+            try {
+                val json = JSONObject(configBody)
+                val media = json.optJSONObject("media")
+                val code = media?.optString("code")?.takeIf { it.isNotBlank() }
+                    ?: json.optString("code").takeIf { it.isNotBlank() }
+
+                if (code != null) {
+                    postUrl = "https://www.instagram.com/reel/$code/"
+                } else {
+                    val pk = media?.optString("pk")?.takeIf { it.isNotBlank() }
+                        ?: media?.optString("id")?.takeIf { it.isNotBlank() }
+                    if (pk != null) {
+                        postUrl = "https://www.instagram.com/reel/$pk/"
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed parsing post code from video configure response", e)
+            }
+
+            if (postUrl == null && account.username.isNotBlank()) {
+                postUrl = "https://www.instagram.com/${account.username}/"
+            }
+
+            val msg = if (postUrl != null) {
+                "Successfully posted Reel to Instagram!\n$postUrl"
+            } else {
+                "Successfully posted Reel to Instagram! (UploadId: $uploadId)"
+            }
+            InstagramPostResponse(true, msg, postUrl)
+        } else {
+            InstagramPostResponse(false, "Video configure failed: $configBody")
         }
     }
 

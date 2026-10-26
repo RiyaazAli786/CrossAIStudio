@@ -19,6 +19,18 @@ data class SavedPin(
     var publishedTo: String? = null // Comma-separated usernames where published, e.g. "@user1, @user2"
 ) {
     /**
+     * Resolves the Instagram reel or post web URL for display, copying, or opening.
+     */
+    fun getEffectivePostUrl(): String? {
+        if (!postUrl.isNullOrBlank()) return postUrl
+        if (!publishedTo.isNullOrBlank()) {
+            val user = publishedTo?.split(",")?.firstOrNull()?.trim()?.removePrefix("@")
+            if (!user.isNullOrBlank()) return "https://www.instagram.com/$user/"
+        }
+        return null
+    }
+
+    /**
      * Resolves the actual image URL for thumbnail display or Instagram photo posting.
      * Prevents passing video URLs or m3u8 playlists into image processors.
      */
@@ -52,68 +64,134 @@ data class SavedPin(
     }
 
     /**
-     * Resolves playable MP4 or video stream URL candidate list in priority order.
-     * Prefers direct progressive MP4 URLs over HLS (.m3u8) playlists.
+     * Resolves the HLS stream URL (.m3u8) for native streaming playback.
      */
-    fun getVideoCandidates(): List<String> {
-        val candidates = mutableListOf<String>()
+    fun getHlsStreamUrl(): String? {
+        if (mediaUrl.contains(".m3u8")) return mediaUrl
 
         if (rawJson.isNotBlank()) {
             try {
                 val json = JSONObject(rawJson)
                 val videos = json.optJSONObject("videos")?.optJSONObject("video_list")
                 if (videos != null) {
-                    // Priority 1: Check standard MP4 keys
-                    val mp4PriorityKeys = listOf("V_720P", "V_EXP7", "V_EXP6", "V_EXP5", "V_EXP4", "V_EXP3")
-                    for (key in mp4PriorityKeys) {
+                    val hlsKeys = listOf("V_HLSV4", "V_HLSV3_MOBILE")
+                    for (key in hlsKeys) {
                         val url = videos.optJSONObject(key)?.optString("url")?.trim()
-                        if (!url.isNullOrBlank() && url.contains(".mp4") && !candidates.contains(url)) {
-                            candidates.add(url)
+                        if (!url.isNullOrBlank() && url.contains(".m3u8")) {
+                            return url
                         }
                     }
+                }
+            } catch (_: Exception) {}
+        }
+        return null
+    }
 
-                    // Priority 2: Check any other key in video_list that has .mp4
+    /**
+     * Resolves the direct video track file (.cmfv or .mp4) for download & Instagram upload.
+     */
+    fun getVideoTrackUrl(): String? {
+        // Priority 1: Direct MP4 if explicitly present in video_list
+        if (rawJson.isNotBlank()) {
+            try {
+                val json = JSONObject(rawJson)
+                val videos = json.optJSONObject("videos")?.optJSONObject("video_list")
+                if (videos != null) {
+                    val mp4Keys = listOf("V_720P", "V_EXP7", "V_EXP6", "V_EXP5", "V_EXP4", "V_EXP3")
+                    for (key in mp4Keys) {
+                        val url = videos.optJSONObject(key)?.optString("url")?.trim()
+                        if (!url.isNullOrBlank() && url.contains(".mp4")) {
+                            return url
+                        }
+                    }
                     val iter = videos.keys()
                     while (iter.hasNext()) {
                         val key = iter.next()
                         val url = videos.optJSONObject(key)?.optString("url")?.trim()
-                        if (!url.isNullOrBlank() && url.contains(".mp4") && !candidates.contains(url)) {
-                            candidates.add(url)
-                        }
-                    }
-
-                    // Priority 3: HLS streams if no mp4 found yet
-                    val hlsKeys = listOf("V_HLSV4", "V_HLSV3_MOBILE")
-                    for (key in hlsKeys) {
-                        val url = videos.optJSONObject(key)?.optString("url")?.trim()
-                        if (!url.isNullOrBlank() && !candidates.contains(url)) {
-                            // If it's an HLS url, derive the 720p and exp7 mp4 equivalents first!
-                            if (url.contains(".m3u8")) {
-                                val derived720p = url.replace("/hls/", "/720p/").replace(".m3u8", ".mp4")
-                                if (!candidates.contains(derived720p)) candidates.add(derived720p)
-                                val derivedExp7 = url.replace("/hls/", "/exp7/").replace(".m3u8", ".mp4")
-                                if (!candidates.contains(derivedExp7)) candidates.add(derivedExp7)
-                            }
-                            candidates.add(url)
+                        if (!url.isNullOrBlank() && url.contains(".mp4")) {
+                            return url
                         }
                     }
                 }
-            } catch (_: Exception) {
-                // Ignore parsing errors
+            } catch (_: Exception) {}
+        }
+
+        // Priority 2: CMAF 720p/540w video track derived from Pinterest HLS URL
+        val hls = getHlsStreamUrl()
+        if (hls != null && hls.contains(".m3u8")) {
+            return hls.replace(".m3u8", "_720w.cmfv")
+        }
+
+        if (mediaUrl.contains(".mp4")) return mediaUrl
+        if (mediaUrl.contains(".cmfv")) return mediaUrl
+
+        return null
+    }
+
+    /**
+     * Resolves all possible video track URL candidates with multi-resolution fallbacks.
+     */
+    fun getVideoTrackCandidates(): List<String> {
+        val candidates = mutableListOf<String>()
+        val primary = getVideoTrackUrl()
+        if (primary != null) candidates.add(primary)
+
+        val hls = getHlsStreamUrl()
+        if (hls != null && hls.contains(".m3u8")) {
+            val resList = listOf("_720w.cmfv", "_540w.cmfv", "_360w.cmfv", "_240w.cmfv", "_mobile.cmfv")
+            for (res in resList) {
+                val candidate = hls.replace(".m3u8", res)
+                if (!candidates.contains(candidate)) {
+                    candidates.add(candidate)
+                }
             }
         }
 
-        // Add mediaUrl if not already present
+        if (mediaUrl.contains(".mp4") && !candidates.contains(mediaUrl)) {
+            candidates.add(mediaUrl)
+        }
+        if (mediaUrl.contains(".cmfv") && !candidates.contains(mediaUrl)) {
+            candidates.add(mediaUrl)
+        }
+        return candidates
+    }
+
+    /**
+     * Resolves the separate audio track file (.cmfa) for Pinterest CMAF video pins.
+     */
+    fun getAudioTrackUrl(): String? {
+        val hls = getHlsStreamUrl()
+        if (hls != null && hls.contains(".m3u8")) {
+            return hls.replace(".m3u8", "_audio.cmfa")
+        }
+        return null
+    }
+
+    /**
+     * Returns whether this pin is a video pin.
+     */
+    fun isVideoPin(): Boolean {
+        return mediaType == "VIDEO" || getHlsStreamUrl() != null || getVideoTrackUrl() != null
+    }
+
+    /**
+     * Resolves playable video stream URL candidate list in priority order.
+     */
+    fun getVideoCandidates(): List<String> {
+        val candidates = mutableListOf<String>()
+
+        val hls = getHlsStreamUrl()
+        if (hls != null && !candidates.contains(hls)) {
+            candidates.add(hls)
+        }
+
+        val videoTrack = getVideoTrackUrl()
+        if (videoTrack != null && !candidates.contains(videoTrack)) {
+            candidates.add(videoTrack)
+        }
+
         if (mediaUrl.isNotBlank() && !candidates.contains(mediaUrl)) {
-            if (mediaUrl.contains(".mp4")) {
-                candidates.add(0, mediaUrl)
-            } else if (mediaUrl.contains(".m3u8")) {
-                val derived = mediaUrl.replace("/hls/", "/720p/").replace(".m3u8", ".mp4")
-                if (!candidates.contains(derived)) candidates.add(derived)
-                candidates.add(mediaUrl)
-            } else if (mediaType == "VIDEO") {
-                candidates.add(mediaUrl)
-            }
+            candidates.add(mediaUrl)
         }
 
         return candidates
@@ -123,10 +201,6 @@ data class SavedPin(
      * Resolves playable video stream URL if pin has video media.
      */
     fun getVideoStreamUrl(): String? {
-        val list = getVideoCandidates()
-        // Prefer first MP4 candidate
-        val mp4 = list.firstOrNull { it.contains(".mp4") }
-        if (mp4 != null) return mp4
-        return list.firstOrNull()
+        return getHlsStreamUrl() ?: getVideoTrackUrl() ?: if (mediaType == "VIDEO") mediaUrl else null
     }
 }

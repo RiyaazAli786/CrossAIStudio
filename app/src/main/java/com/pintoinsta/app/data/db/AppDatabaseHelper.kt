@@ -513,6 +513,22 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return db.delete(TABLE_SAVED_PINS, "pin_id = ?", arrayOf(pinId))
     }
 
+    fun deleteSavedPins(pinIds: List<String>): Int {
+        if (pinIds.isEmpty()) return 0
+        val db = writableDatabase
+        var deletedCount = 0
+        db.beginTransaction()
+        try {
+            for (id in pinIds) {
+                deletedCount += db.delete(TABLE_SAVED_PINS, "pin_id = ?", arrayOf(id))
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return deletedCount
+    }
+
     private fun cursorToSavedPin(cursor: Cursor): SavedPin {
         val postUrlIdx = cursor.getColumnIndex("post_url")
         val postUrl = if (postUrlIdx != -1 && !cursor.isNull(postUrlIdx)) cursor.getString(postUrlIdx) else null
@@ -726,5 +742,10 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             }
         }
         return list
+    }
+
+    fun clearAllPostLogs(): Int {
+        val db = writableDatabase
+        return db.delete(TABLE_POST_LOGS, null, null)
     }
 }

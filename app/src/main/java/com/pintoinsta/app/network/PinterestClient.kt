@@ -331,18 +331,14 @@ class PinterestClient(
                             }
                         }
 
-                        // If still empty, check HLS and derive direct 720p/exp7 mp4 equivalent
+                        // If still empty, check HLS stream
                         if (mediaUrl.isEmpty()) {
                             val hlsKeys = listOf("V_HLSV4", "V_HLSV3_MOBILE")
                             for (key in hlsKeys) {
                                 val vObj = videoListObj.optJSONObject(key)
                                 val vUrl = vObj?.optString("url") ?: ""
                                 if (vUrl.isNotBlank()) {
-                                    mediaUrl = if (vUrl.contains(".m3u8")) {
-                                        vUrl.replace("/hls/", "/720p/").replace(".m3u8", ".mp4")
-                                    } else {
-                                        vUrl
-                                    }
+                                    mediaUrl = vUrl
                                     mediaType = "VIDEO"
                                     break
                                 }

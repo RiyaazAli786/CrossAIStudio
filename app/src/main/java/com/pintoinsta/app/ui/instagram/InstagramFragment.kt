@@ -97,6 +97,7 @@ class InstagramFragment : Fragment() {
         val intent = Intent(requireContext(), WebLoginActivity::class.java).apply {
             putExtra(WebLoginActivity.EXTRA_PLATFORM, WebLoginActivity.PLATFORM_INSTAGRAM)
             putExtra(WebLoginActivity.EXTRA_RE_LOGIN_USERNAME, account.username)
+            putExtra(WebLoginActivity.EXTRA_FROM_CARD, true)
         }
         startActivity(intent)
     }

@@ -43,6 +43,7 @@ class WebLoginActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_PLATFORM = "extra_platform" // "PINTEREST" or "INSTAGRAM"
         const val EXTRA_RE_LOGIN_USERNAME = "extra_re_login_username"
+        const val EXTRA_FROM_CARD = "extra_from_card"
         const val PLATFORM_PINTEREST = "PINTEREST"
         const val PLATFORM_INSTAGRAM = "INSTAGRAM"
     }
@@ -54,6 +55,9 @@ class WebLoginActivity : AppCompatActivity() {
     private var isSessionCaptured = false
     private var isCapturing = false
     private var cleanUserAgent = ""
+
+    private val isFromCard: Boolean
+        get() = intent.getBooleanExtra(EXTRA_FROM_CARD, false) || !reLoginUsername.isNullOrBlank()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -765,20 +769,35 @@ class WebLoginActivity : AppCompatActivity() {
                 }
             }
 
-            withContext(Dispatchers.Main) {
-                Toast.makeText(
-                    this@WebLoginActivity,
-                    "Session grabbed successfully for @$username! Closing in 5 seconds...",
-                    Toast.LENGTH_LONG
-                ).show()
-                binding.tvLoginStatus.text = "Session grabbed successfully for @$username!\nClosing browser in 5 seconds..."
-            }
+            // Requirement: On web login via card should not close browser automatic, just grab the fresh session and stay open
+            if (isFromCard) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@WebLoginActivity,
+                        "Fresh session grabbed for @${account.username}! Browser staying open.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    binding.tvLoginStatus.text = "Fresh session captured for @${account.username}! Browser staying open. Press Back to exit."
+                    binding.btnCaptureSession.isEnabled = true
+                    binding.btnCaptureSession.text = "Session Active"
+                    isCapturing = false
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@WebLoginActivity,
+                        "Session grabbed successfully for @${account.username}! Closing in 5 seconds...",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    binding.tvLoginStatus.text = "Session grabbed successfully for @${account.username}!\nClosing browser in 5 seconds..."
+                }
 
-            // Close browser after 5 seconds delay
-            delay(5000L)
+                // Close browser after 5 seconds delay for new account adds
+                delay(5000L)
 
-            withContext(Dispatchers.Main) {
-                finish()
+                withContext(Dispatchers.Main) {
+                    finish()
+                }
             }
         }
     }
@@ -816,13 +835,34 @@ class WebLoginActivity : AppCompatActivity() {
                 }
             }
 
-            withContext(Dispatchers.Main) {
-                Toast.makeText(
-                    this@WebLoginActivity,
-                    "Instagram account '@$username' successfully added!",
-                    Toast.LENGTH_LONG
-                ).show()
-                finish()
+            // Requirement: On web login via card should not close browser automatic, just grab the fresh session and stay open
+            if (isFromCard) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@WebLoginActivity,
+                        "Fresh session grabbed for @${account.username}! Browser staying open.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    binding.tvLoginStatus.text = "Fresh session captured for @${account.username}! Browser staying open. Press Back to exit."
+                    binding.btnCaptureSession.isEnabled = true
+                    binding.btnCaptureSession.text = "Session Active"
+                    isCapturing = false
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@WebLoginActivity,
+                        "Instagram account '@${account.username}' successfully added! Closing in 5 seconds...",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    binding.tvLoginStatus.text = "Instagram account '@${account.username}' successfully added!\nClosing browser in 5 seconds..."
+                }
+
+                delay(5000L)
+
+                withContext(Dispatchers.Main) {
+                    finish()
+                }
             }
         }
     }

@@ -29,6 +29,8 @@ import com.pintoinsta.app.databinding.ActivityWebLoginBinding
 import com.pintoinsta.app.worker.ScheduleManager
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -280,6 +282,15 @@ class WebLoginActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                if (platform == PLATFORM_PINTEREST && !isSessionCaptured && !isCapturing) {
+                    lifecycleScope.launch {
+                        val href = checkPinterestProfileLink()
+                        if (href.isNotBlank()) {
+                            onPinterestProfileFound(href)
+                            return@launch
+                        }
+                    }
+                }
                 val cookies = getPlatformCookies()
                 if (isUserLoggedIn(url, cookies)) {
                     // Only auto-capture when we have confirmed the user reached a logged-in page
@@ -307,9 +318,11 @@ class WebLoginActivity : AppCompatActivity() {
                 cookieManager.flush()
                 webView.clearCache(true)
                 webView.loadUrl(startUrl)
+                startPinterestProfilePoller()
             }
         } else {
             webView.loadUrl(startUrl)
+            startPinterestProfilePoller()
         }
     }
 
@@ -398,13 +411,72 @@ class WebLoginActivity : AppCompatActivity() {
         }
     }
 
-    private fun capturePinterestSession(cookies: String) {
+    private suspend fun checkPinterestProfileLink(): String {
+        return evaluateJs(
+            """
+            (function() {
+                try {
+                    var el = document.querySelector('a[aria-label="Your profile"]') || 
+                             document.querySelector('a[aria-label*="profile" i]') ||
+                             document.querySelector('header a[href^="/"][aria-label*="Profile"]') ||
+                             document.querySelector('a[data-test-id*="profile"]');
+                    if (el && el.href && el.href.length > 5) {
+                        return el.href;
+                    }
+                } catch(e) {}
+                return '';
+            })()
+            """.trimIndent()
+        )
+    }
+
+    private fun startPinterestProfilePoller() {
+        if (platform != PLATFORM_PINTEREST) return
+        lifecycleScope.launch {
+            while (isActive && !isSessionCaptured && !isCapturing) {
+                delay(1200L)
+                if (isSessionCaptured || isCapturing) break
+                val href = checkPinterestProfileLink()
+                if (href.isNotBlank()) {
+                    onPinterestProfileFound(href)
+                    break
+                }
+            }
+        }
+    }
+
+    private fun onPinterestProfileFound(profileHref: String) {
+        if (isSessionCaptured || isCapturing) return
+        isCapturing = true
+
+        Toast.makeText(this@WebLoginActivity, "Grabbing session...", Toast.LENGTH_SHORT).show()
+        binding.tvLoginStatus.text = "Pinterest profile detected! Grabbing session..."
+        binding.btnCaptureSession.isEnabled = false
+
+        var detectedUsername = ""
+        try {
+            val uri = Uri.parse(profileHref)
+            val segments = uri.pathSegments
+            if (!segments.isNullOrEmpty()) {
+                val candidate = segments[0]
+                val systemWords = setOf("login", "signup", "today", "ideas", "settings", "notifications", "business", "about", "pin", "search")
+                if (!systemWords.contains(candidate.lowercase()) && candidate.matches(Regex("^[a-zA-Z0-9_.-]+$"))) {
+                    detectedUsername = candidate
+                }
+            }
+        } catch (_: Exception) {}
+
+        val cookies = getPlatformCookies()
+        capturePinterestSession(cookies, detectedUsername)
+    }
+
+    private fun capturePinterestSession(cookies: String, preExtractedUsername: String = "") {
         isCapturing = true
         binding.tvLoginStatus.text = "Logged in! Grabbing account details..."
         binding.btnCaptureSession.isEnabled = false
 
         lifecycleScope.launch(Dispatchers.IO) {
-            var username = reLoginUsername ?: ""
+            var username = preExtractedUsername.ifBlank { reLoginUsername ?: "" }
             var displayName = ""
             var profilePic = ""
             val csrfToken = extractCookieValue(cookies, "csrftoken")
@@ -696,9 +768,16 @@ class WebLoginActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) {
                 Toast.makeText(
                     this@WebLoginActivity,
-                    "Pinterest account '@$username' successfully added with Auto Post enabled!",
+                    "Session grabbed successfully for @$username! Closing in 5 seconds...",
                     Toast.LENGTH_LONG
                 ).show()
+                binding.tvLoginStatus.text = "Session grabbed successfully for @$username!\nClosing browser in 5 seconds..."
+            }
+
+            // Close browser after 5 seconds delay
+            delay(5000L)
+
+            withContext(Dispatchers.Main) {
                 finish()
             }
         }

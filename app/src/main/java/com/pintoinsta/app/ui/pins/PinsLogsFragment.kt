@@ -109,34 +109,83 @@ class PinsLogsFragment : Fragment() {
         pin: SavedPin,
         button: com.google.android.material.button.MaterialButton
     ) {
+        lifecycleScope.launch {
+            val accounts = repository.getAllInstagramAccounts()
+            if (accounts.isEmpty()) {
+                Toast.makeText(
+                    requireContext(),
+                    "No Instagram accounts added yet. Please add an Instagram account first.",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@launch
+            }
+
+            if (accounts.size == 1) {
+                // Single account direct publish
+                executePublish(pin, listOf(accounts.first().id), button)
+                return@launch
+            }
+
+            // Multiple accounts: show multi-select dialog
+            val accountNames = accounts.map { "@${it.username} (${it.status})" }.toTypedArray()
+            val checkedItems = BooleanArray(accounts.size) { false }
+            checkedItems[0] = true // Check first by default
+
+            AlertDialog.Builder(requireContext())
+                .setTitle("Select Instagram Accounts")
+                .setMultiChoiceItems(accountNames, checkedItems) { _, which, isChecked ->
+                    checkedItems[which] = isChecked
+                }
+                .setMessage("Select the accounts to publish this pin to. If multiple accounts are selected, publishing will be staggered with a random delay of 5 to 10 minutes between accounts.")
+                .setPositiveButton("Publish") { _, _ ->
+                    val selectedIds = accounts.filterIndexed { index, _ -> checkedItems[index] }.map { it.id }
+                    if (selectedIds.isEmpty()) {
+                        Toast.makeText(requireContext(), "No accounts selected", Toast.LENGTH_SHORT).show()
+                    } else {
+                        executePublish(pin, selectedIds, button)
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    private fun executePublish(
+        pin: SavedPin,
+        selectedAccountIds: List<Long>,
+        button: com.google.android.material.button.MaterialButton
+    ) {
         button.isEnabled = false
         button.text = "Publishing..."
 
         Toast.makeText(
             requireContext(),
-            "Publishing Pin ${pin.pinId} to Instagram...",
+            "Starting publish for Pin ${pin.pinId} (${selectedAccountIds.size} accounts selected)...",
             Toast.LENGTH_SHORT
         ).show()
 
         lifecycleScope.launch {
-            val result = repository.postSinglePin(pin)
-            if (result.first) {
+            val result = repository.postPinToMultipleAccounts(pin, selectedAccountIds) { current, total, msg ->
+                button.text = "Pub $current/$total..."
+                Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
+            }
+
+            if (result.first > 0) {
                 Toast.makeText(
                     requireContext(),
-                    "Pin ${pin.pinId} published successfully!",
+                    "Published ${result.first}/${selectedAccountIds.size} account(s)!\n${result.second}",
                     Toast.LENGTH_LONG
                 ).show()
-                loadData()
             } else {
+                Toast.makeText(
+                    requireContext(),
+                    "Publish failed: ${result.second}",
+                    Toast.LENGTH_LONG
+                ).show()
                 button.isEnabled = true
                 button.text = "Publish Now"
-                Toast.makeText(
-                    requireContext(),
-                    "Failed to publish: ${result.second}",
-                    Toast.LENGTH_LONG
-                ).show()
-                loadData()
             }
+            loadData()
         }
     }
 

@@ -24,7 +24,7 @@ class PinterestAccountsAdapter(
     private val onWebLogin: (PinterestAccount) -> Unit,
     private val onRunNow: (PinterestAccount) -> Unit,
     private val onDelete: (PinterestAccount) -> Unit,
-    private val onScheduleChanged: (PinterestAccount, Long?, Int, Boolean) -> Unit
+    private val onScheduleChanged: (PinterestAccount, Long?, Int, Boolean, String) -> Unit
 ) : RecyclerView.Adapter<PinterestAccountsAdapter.ViewHolder>() {
 
     private val intervals = listOf(1, 2, 4, 6, 12, 24)
@@ -75,28 +75,57 @@ class PinterestAccountsAdapter(
             // Status Badge
             updateStatusBadge(account.status)
 
-            // Setup Instagram dropdown
-            val instaItems = mutableListOf("Select Instagram Account")
-            val instaIds = mutableListOf<Long?>()
-            instaIds.add(null)
-
-            for (insta in instagramAccounts) {
-                instaItems.add("@${insta.username} (${insta.status})")
-                instaIds.add(insta.id)
+            // Setup Multi-Select Instagram text
+            fun updateLinkedAccountsText() {
+                val linkedIds = account.getLinkedInstagramIdList()
+                val selectedNames = instagramAccounts.filter { linkedIds.contains(it.id) }.map { "@${it.username}" }
+                binding.tvLinkedInstagramAccounts.text = when {
+                    selectedNames.isEmpty() -> "Select Instagram Accounts"
+                    selectedNames.size == 1 -> selectedNames.first()
+                    else -> "${selectedNames.size} Accounts: ${selectedNames.joinToString(", ")}"
+                }
             }
+            updateLinkedAccountsText()
 
-            val spinnerAdapter = ArrayAdapter(
-                context,
-                android.R.layout.simple_spinner_item,
-                instaItems
-            ).apply {
-                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            binding.layoutSelectInstagramAccounts.setOnClickListener {
+                if (instagramAccounts.isEmpty()) {
+                    android.widget.Toast.makeText(
+                        context,
+                        "No Instagram accounts added yet. Please add an Instagram account first.",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    return@setOnClickListener
+                }
+
+                val currentLinked = account.getLinkedInstagramIdList().toMutableSet()
+                val items = instagramAccounts.map { "@${it.username} (${it.status})" }.toTypedArray()
+                val checked = BooleanArray(instagramAccounts.size) { i ->
+                    currentLinked.contains(instagramAccounts[i].id)
+                }
+
+                androidx.appcompat.app.AlertDialog.Builder(context)
+                    .setTitle("Select Instagram Accounts")
+                    .setMultiChoiceItems(items, checked) { _, which, isChecked ->
+                        val id = instagramAccounts[which].id
+                        if (isChecked) currentLinked.add(id) else currentLinked.remove(id)
+                    }
+                    .setPositiveButton("Save (${currentLinked.size} selected)") { _, _ ->
+                        val selectedList = currentLinked.toList()
+                        account.setLinkedInstagramIdList(selectedList)
+                        updateLinkedAccountsText()
+                        val newInterval = intervals[binding.spinnerInterval.selectedItemPosition]
+                        val isAuto = binding.switchAutoPost.isChecked
+                        onScheduleChanged(
+                            account,
+                            account.linkedInstagramAccountId,
+                            newInterval,
+                            isAuto,
+                            account.linkedInstagramAccountIds
+                        )
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
             }
-            binding.spinnerInstagram.adapter = spinnerAdapter
-
-            // Select linked Instagram
-            val selectedIndex = instaIds.indexOf(account.linkedInstagramAccountId).coerceAtLeast(0)
-            binding.spinnerInstagram.setSelection(selectedIndex, false)
 
             // Setup Interval dropdown
             val intervalAdapter = ArrayAdapter(
@@ -107,7 +136,7 @@ class PinterestAccountsAdapter(
                 setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
             }
             binding.spinnerInterval.adapter = intervalAdapter
-            val intervalIndex = intervals.indexOf(account.scheduleIntervalHours).coerceAtLeast(intervals.size - 1)
+            val intervalIndex = intervals.indexOf(account.scheduleIntervalHours).coerceAtLeast(0)
             binding.spinnerInterval.setSelection(intervalIndex, false)
 
             // Switch
@@ -121,28 +150,32 @@ class PinterestAccountsAdapter(
             binding.tvLastRunInfo.text = "Last: ${account.lastRunStatus} • Next run: $nextRunStr"
 
             // Listeners for schedule changes
-            val scheduleChangeListener = object : AdapterView.OnItemSelectedListener {
+            binding.spinnerInterval.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
-                    val newInstaId = instaIds[binding.spinnerInstagram.selectedItemPosition]
-                    val newInterval = intervals[binding.spinnerInterval.selectedItemPosition]
+                    val newInterval = intervals[pos]
                     val isAuto = binding.switchAutoPost.isChecked
-                    if (newInstaId != account.linkedInstagramAccountId ||
-                        newInterval != account.scheduleIntervalHours ||
-                        isAuto != account.isAutoPostEnabled
-                    ) {
-                        onScheduleChanged(account, newInstaId, newInterval, isAuto)
+                    if (newInterval != account.scheduleIntervalHours) {
+                        onScheduleChanged(
+                            account,
+                            account.linkedInstagramAccountId,
+                            newInterval,
+                            isAuto,
+                            account.linkedInstagramAccountIds
+                        )
                     }
                 }
                 override fun onNothingSelected(parent: AdapterView<*>?) {}
             }
 
-            binding.spinnerInstagram.onItemSelectedListener = scheduleChangeListener
-            binding.spinnerInterval.onItemSelectedListener = scheduleChangeListener
-
             binding.switchAutoPost.setOnCheckedChangeListener { _, isChecked ->
-                val newInstaId = instaIds[binding.spinnerInstagram.selectedItemPosition]
                 val newInterval = intervals[binding.spinnerInterval.selectedItemPosition]
-                onScheduleChanged(account, newInstaId, newInterval, isChecked)
+                onScheduleChanged(
+                    account,
+                    account.linkedInstagramAccountId,
+                    newInterval,
+                    isChecked,
+                    account.linkedInstagramAccountIds
+                )
             }
 
             // Buttons

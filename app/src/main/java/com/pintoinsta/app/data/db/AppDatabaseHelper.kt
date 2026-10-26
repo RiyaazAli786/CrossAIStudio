@@ -5,11 +5,17 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.pintoinsta.app.data.model.AccountAnalytics
+import com.pintoinsta.app.data.model.DailyAnalytics
 import com.pintoinsta.app.data.model.InstagramAccount
+import com.pintoinsta.app.data.model.OverallAnalytics
 import com.pintoinsta.app.data.model.PinterestAccount
 import com.pintoinsta.app.data.model.PostLog
 import com.pintoinsta.app.data.model.SavedPin
 import com.pintoinsta.app.data.model.SearchKeyword
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
@@ -47,6 +53,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 csrf_token TEXT,
                 status TEXT,
                 linked_instagram_account_id INTEGER,
+                linked_instagram_account_ids TEXT,
                 schedule_interval_hours INTEGER,
                 is_auto_post_enabled INTEGER,
                 next_run_time INTEGER,
@@ -98,7 +105,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 instagram_account_id INTEGER,
                 created_at INTEGER,
                 raw_json TEXT,
-                post_url TEXT
+                post_url TEXT,
+                published_to TEXT
             )
             """.trimIndent()
         )
@@ -128,6 +136,12 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         } catch (_: Exception) {}
         try {
             db.execSQL("ALTER TABLE $TABLE_SAVED_PINS ADD COLUMN post_url TEXT")
+        } catch (_: Exception) {}
+        try {
+            db.execSQL("ALTER TABLE $TABLE_PINTEREST_ACCOUNTS ADD COLUMN linked_instagram_account_ids TEXT")
+        } catch (_: Exception) {}
+        try {
+            db.execSQL("ALTER TABLE $TABLE_SAVED_PINS ADD COLUMN published_to TEXT")
         } catch (_: Exception) {}
     }
 
@@ -168,6 +182,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("csrf_token", account.csrfToken)
             put("status", account.status)
             put("linked_instagram_account_id", account.linkedInstagramAccountId)
+            put("linked_instagram_account_ids", account.linkedInstagramAccountIds)
             put("schedule_interval_hours", account.scheduleIntervalHours)
             put("is_auto_post_enabled", if (account.isAutoPostEnabled) 1 else 0)
             put("next_run_time", account.nextRunTime)
@@ -227,10 +242,17 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         db.update(TABLE_PINTEREST_ACCOUNTS, cv, "id = ?", arrayOf(id.toString()))
     }
 
-    fun updatePinterestAccountSchedule(id: Long, linkedInstaId: Long?, intervalHours: Int, isEnabled: Boolean) {
+    fun updatePinterestAccountSchedule(
+        id: Long,
+        linkedInstaId: Long?,
+        intervalHours: Int,
+        isEnabled: Boolean,
+        linkedInstaIds: String = ""
+    ) {
         val db = writableDatabase
         val cv = ContentValues().apply {
             put("linked_instagram_account_id", linkedInstaId)
+            put("linked_instagram_account_ids", linkedInstaIds)
             put("schedule_interval_hours", intervalHours)
             put("is_auto_post_enabled", if (isEnabled) 1 else 0)
         }
@@ -253,6 +275,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     private fun cursorToPinterestAccount(cursor: Cursor): PinterestAccount {
+        val multiIdx = cursor.getColumnIndex("linked_instagram_account_ids")
+        val linkedAccountIds = if (multiIdx != -1 && !cursor.isNull(multiIdx)) cursor.getString(multiIdx) else ""
+
         return PinterestAccount(
             id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
             username = cursor.getString(cursor.getColumnIndexOrThrow("username")),
@@ -262,6 +287,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             csrfToken = cursor.getString(cursor.getColumnIndexOrThrow("csrf_token")) ?: "",
             status = cursor.getString(cursor.getColumnIndexOrThrow("status")) ?: "UNKNOWN",
             linkedInstagramAccountId = if (cursor.isNull(cursor.getColumnIndexOrThrow("linked_instagram_account_id"))) null else cursor.getLong(cursor.getColumnIndexOrThrow("linked_instagram_account_id")),
+            linkedInstagramAccountIds = linkedAccountIds,
             scheduleIntervalHours = cursor.getInt(cursor.getColumnIndexOrThrow("schedule_interval_hours")),
             isAutoPostEnabled = cursor.getInt(cursor.getColumnIndexOrThrow("is_auto_post_enabled")) == 1,
             nextRunTime = cursor.getLong(cursor.getColumnIndexOrThrow("next_run_time")),
@@ -406,6 +432,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("instagram_account_id", pin.instagramAccountId)
             put("created_at", pin.createdAt)
             put("raw_json", pin.rawJson)
+            if (!pin.publishedTo.isNullOrBlank()) {
+                put("published_to", pin.publishedTo)
+            }
         }
         return db.insertWithOnConflict(TABLE_SAVED_PINS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
     }
@@ -452,15 +481,28 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         pinId: String,
         instagramAccountId: Long,
         postedAt: Long = System.currentTimeMillis(),
-        postUrl: String? = null
+        postUrl: String? = null,
+        publishedToUsername: String? = null
     ) {
         val db = writableDatabase
+        val existingPin = getSavedPinById(pinId)
+        val currentPublishedTo = existingPin?.publishedTo
+        val newPublishedTo = when {
+            publishedToUsername.isNullOrBlank() -> currentPublishedTo
+            currentPublishedTo.isNullOrBlank() -> "@$publishedToUsername"
+            currentPublishedTo.contains("@$publishedToUsername") -> currentPublishedTo
+            else -> "$currentPublishedTo, @$publishedToUsername"
+        }
+
         val cv = ContentValues().apply {
             put("is_posted", 1)
             put("posted_at", postedAt)
             put("instagram_account_id", instagramAccountId)
             if (!postUrl.isNullOrBlank()) {
                 put("post_url", postUrl)
+            }
+            if (!newPublishedTo.isNullOrBlank()) {
+                put("published_to", newPublishedTo)
             }
         }
         db.update(TABLE_SAVED_PINS, cv, "pin_id = ?", arrayOf(pinId))
@@ -474,6 +516,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     private fun cursorToSavedPin(cursor: Cursor): SavedPin {
         val postUrlIdx = cursor.getColumnIndex("post_url")
         val postUrl = if (postUrlIdx != -1 && !cursor.isNull(postUrlIdx)) cursor.getString(postUrlIdx) else null
+        val publishedToIdx = cursor.getColumnIndex("published_to")
+        val publishedTo = if (publishedToIdx != -1 && !cursor.isNull(publishedToIdx)) cursor.getString(publishedToIdx) else null
 
         return SavedPin(
             pinId = cursor.getString(cursor.getColumnIndexOrThrow("pin_id")),
@@ -488,7 +532,160 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             instagramAccountId = if (cursor.isNull(cursor.getColumnIndexOrThrow("instagram_account_id"))) null else cursor.getLong(cursor.getColumnIndexOrThrow("instagram_account_id")),
             createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
             rawJson = cursor.getString(cursor.getColumnIndexOrThrow("raw_json")) ?: "",
-            postUrl = postUrl
+            postUrl = postUrl,
+            publishedTo = publishedTo
+        )
+    }
+
+    // --- ANALYTICS ---
+    fun getAnalyticsData(): OverallAnalytics {
+        val db = readableDatabase
+        val instaAccounts = getAllInstagramAccounts()
+        val pinAccounts = getAllPinterestAccounts()
+        val accountStatsList = mutableListOf<AccountAnalytics>()
+
+        var totalPublishedAll = 0
+        var totalFailedAll = 0
+
+        // Analytics for Instagram Accounts
+        for (insta in instaAccounts) {
+            var published = 0
+            var failed = 0
+            var lastActive = insta.lastCheckedTime
+
+            val curSuccess = db.rawQuery(
+                "SELECT COUNT(*) FROM $TABLE_POST_LOGS WHERE instagram_account_id = ? AND status = 'SUCCESS'",
+                arrayOf(insta.id.toString())
+            )
+            curSuccess.use { if (it.moveToFirst()) published = it.getInt(0) }
+
+            val curFailed = db.rawQuery(
+                "SELECT COUNT(*) FROM $TABLE_POST_LOGS WHERE instagram_account_id = ? AND status = 'FAILED'",
+                arrayOf(insta.id.toString())
+            )
+            curFailed.use { if (it.moveToFirst()) failed = it.getInt(0) }
+
+            val curLastTime = db.rawQuery(
+                "SELECT MAX(timestamp) FROM $TABLE_POST_LOGS WHERE instagram_account_id = ?",
+                arrayOf(insta.id.toString())
+            )
+            curLastTime.use {
+                if (it.moveToFirst() && !it.isNull(0)) {
+                    val t = it.getLong(0)
+                    if (t > lastActive) lastActive = t
+                }
+            }
+
+            totalPublishedAll += published
+            totalFailedAll += failed
+            val total = published + failed
+            val rate = if (total > 0) (published * 100f / total) else 100f
+
+            accountStatsList.add(
+                AccountAnalytics(
+                    accountId = insta.id,
+                    username = insta.username,
+                    platform = "Instagram",
+                    profilePicUrl = insta.profilePicUrl,
+                    totalPublished = published,
+                    totalFailed = failed,
+                    totalActions = total,
+                    successRate = rate,
+                    lastActiveTime = lastActive,
+                    status = insta.status
+                )
+            )
+        }
+
+        // Analytics for Pinterest Accounts
+        for (pinAcc in pinAccounts) {
+            var published = 0
+            var totalPins = 0
+            var failedSearches = 0
+            var lastActive = maxOf(pinAcc.lastRunTime, pinAcc.lastCheckedTime)
+
+            val curPins = db.rawQuery(
+                "SELECT COUNT(*), SUM(CASE WHEN is_posted = 1 THEN 1 ELSE 0 END) FROM $TABLE_SAVED_PINS WHERE pinterest_account_id = ?",
+                arrayOf(pinAcc.id.toString())
+            )
+            curPins.use {
+                if (it.moveToFirst()) {
+                    totalPins = it.getInt(0)
+                    published = if (!it.isNull(1)) it.getInt(1) else 0
+                }
+            }
+
+            val curSearchFail = db.rawQuery(
+                "SELECT COUNT(*) FROM $TABLE_POST_LOGS WHERE pin_id = 'SEARCH' AND status = 'FAILED' AND message LIKE ?",
+                arrayOf("%${pinAcc.username}%")
+            )
+            curSearchFail.use { if (it.moveToFirst()) failedSearches = it.getInt(0) }
+
+            val total = published + failedSearches
+            val rate = if (total > 0) (published * 100f / total) else 100f
+
+            accountStatsList.add(
+                AccountAnalytics(
+                    accountId = pinAcc.id,
+                    username = pinAcc.username,
+                    platform = "Pinterest",
+                    profilePicUrl = pinAcc.profilePicUrl,
+                    totalPublished = published,
+                    totalFailed = failedSearches,
+                    totalActions = totalPins,
+                    successRate = rate,
+                    lastActiveTime = lastActive,
+                    status = pinAcc.status
+                )
+            )
+        }
+
+        // Daily Trend (last 7 days)
+        val dailyList = mutableListOf<DailyAnalytics>()
+        val sdfLabel = SimpleDateFormat("MMM dd", Locale.getDefault())
+
+        for (i in 6 downTo 0) {
+            val cal = java.util.Calendar.getInstance().apply {
+                add(java.util.Calendar.DAY_OF_YEAR, -i)
+                set(java.util.Calendar.HOUR_OF_DAY, 0)
+                set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+            }
+            val startMs = cal.timeInMillis
+            val endMs = startMs + 24 * 3600 * 1000L
+            val label = sdfLabel.format(cal.time)
+
+            var pub = 0
+            var fail = 0
+
+            val curDay = db.rawQuery(
+                "SELECT " +
+                        "SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END), " +
+                        "SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) " +
+                        "FROM $TABLE_POST_LOGS WHERE timestamp >= ? AND timestamp < ?",
+                arrayOf(startMs.toString(), endMs.toString())
+            )
+            curDay.use {
+                if (it.moveToFirst()) {
+                    pub = if (!it.isNull(0)) it.getInt(0) else 0
+                    fail = if (!it.isNull(1)) it.getInt(1) else 0
+                }
+            }
+
+            dailyList.add(DailyAnalytics(dateLabel = label, publishedCount = pub, failedCount = fail))
+        }
+
+        val allTotal = totalPublishedAll + totalFailedAll
+        val overallRate = if (allTotal > 0) (totalPublishedAll * 100f / allTotal) else 100f
+
+        return OverallAnalytics(
+            totalPublished = totalPublishedAll,
+            totalFailed = totalFailedAll,
+            totalAccounts = instaAccounts.size + pinAccounts.size,
+            overallSuccessRate = overallRate,
+            accountStats = accountStatsList,
+            dailyStats = dailyList
         )
     }
 

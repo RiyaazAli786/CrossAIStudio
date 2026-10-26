@@ -18,6 +18,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import com.pintoinsta.app.databinding.ActivityMainBinding
 import com.pintoinsta.app.service.CrossAIPostingService
+import com.pintoinsta.app.ui.analytics.AnalyticsFragment
 import com.pintoinsta.app.ui.instagram.InstagramFragment
 import com.pintoinsta.app.ui.pins.PinsLogsFragment
 import com.pintoinsta.app.ui.pinterest.PinterestFragment
@@ -32,6 +33,7 @@ class MainActivity : AppCompatActivity() {
     private val pinterestFragment = PinterestFragment()
     private val instagramFragment = InstagramFragment()
     private val pinsLogsFragment = PinsLogsFragment()
+    private val analyticsFragment = AnalyticsFragment()
     private val settingsFragment = SettingsFragment()
 
     private val requestNotificationPermission =
@@ -82,6 +84,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 R.id.nav_pins -> {
                     switchFragment(pinsLogsFragment)
+                    true
+                }
+                R.id.nav_analytics -> {
+                    switchFragment(analyticsFragment)
                     true
                 }
                 R.id.nav_settings -> {

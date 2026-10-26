@@ -52,7 +52,12 @@ class SavedPinsAdapter(
             binding.tvSearchKeyword.text = "Keyword: ${pin.searchTerm} • ${pin.mediaType}"
 
             if (pin.isPosted) {
-                binding.tvPinStatus.text = "Published"
+                val publishedLabel = if (!pin.publishedTo.isNullOrBlank()) {
+                    "Published on ${pin.publishedTo}"
+                } else {
+                    "Published"
+                }
+                binding.tvPinStatus.text = publishedLabel
                 binding.tvPinStatus.setBackgroundResource(R.drawable.bg_badge_active)
                 binding.tvPinStatus.setTextColor(ContextCompat.getColor(context, R.color.status_green))
                 binding.btnPublishPin.visibility = View.GONE

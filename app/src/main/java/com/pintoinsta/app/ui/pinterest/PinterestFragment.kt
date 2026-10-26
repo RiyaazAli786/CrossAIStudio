@@ -55,8 +55,8 @@ class PinterestFragment : Fragment() {
             onWebLogin = { account -> openWebLogin(account) },
             onRunNow = { account -> runNow(account) },
             onDelete = { account -> confirmDelete(account) },
-            onScheduleChanged = { account, linkedInstaId, interval, isAuto ->
-                updateSchedule(account, linkedInstaId, interval, isAuto)
+            onScheduleChanged = { account, linkedInstaId, interval, isAuto, linkedIdsStr ->
+                updateSchedule(account, linkedInstaId, interval, isAuto, linkedIdsStr)
             }
         )
 
@@ -127,11 +127,13 @@ class PinterestFragment : Fragment() {
         account: PinterestAccount,
         linkedInstaId: Long?,
         interval: Int,
-        isAuto: Boolean
+        isAuto: Boolean,
+        linkedIdsStr: String = ""
     ) {
         lifecycleScope.launch {
-            repository.updatePinterestAccountSchedule(account.id, linkedInstaId, interval, isAuto)
+            repository.updatePinterestAccountSchedule(account.id, linkedInstaId, interval, isAuto, linkedIdsStr)
             account.linkedInstagramAccountId = linkedInstaId
+            account.linkedInstagramAccountIds = linkedIdsStr
             account.scheduleIntervalHours = interval
             account.isAutoPostEnabled = isAuto
             ScheduleManager.updateAccountSchedule(requireContext(), account)

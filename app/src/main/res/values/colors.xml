@@ -25,6 +25,7 @@
     <color name="status_red">#EF4444</color>
     <color name="status_orange">#F59E0B</color>
     <color name="status_blue">#3B82F6</color>
+    <color name="error">#EF4444</color>
 
     <color name="pinterest_red">#E60023</color>
     <color name="instagram_pink">#E1306C</color>

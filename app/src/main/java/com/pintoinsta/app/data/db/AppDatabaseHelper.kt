@@ -59,7 +59,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 next_run_time INTEGER,
                 last_run_time INTEGER,
                 last_run_status TEXT,
-                last_checked_time INTEGER
+                last_checked_time INTEGER,
+                daily_post_times TEXT
             )
             """.trimIndent()
         )
@@ -141,6 +142,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             db.execSQL("ALTER TABLE $TABLE_PINTEREST_ACCOUNTS ADD COLUMN linked_instagram_account_ids TEXT")
         } catch (_: Exception) {}
         try {
+            db.execSQL("ALTER TABLE $TABLE_PINTEREST_ACCOUNTS ADD COLUMN daily_post_times TEXT")
+        } catch (_: Exception) {}
+        try {
             db.execSQL("ALTER TABLE $TABLE_SAVED_PINS ADD COLUMN published_to TEXT")
         } catch (_: Exception) {}
     }
@@ -189,6 +193,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("last_run_time", account.lastRunTime)
             put("last_run_status", account.lastRunStatus)
             put("last_checked_time", account.lastCheckedTime)
+            put("daily_post_times", account.dailyPostTimes)
         }
         val existing = getPinterestAccountByUsername(account.username)
         return if (existing != null) {
@@ -247,7 +252,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         linkedInstaId: Long?,
         intervalHours: Int,
         isEnabled: Boolean,
-        linkedInstaIds: String = ""
+        linkedInstaIds: String = "",
+        dailyPostTimes: String = "09:00,14:00,20:00"
     ) {
         val db = writableDatabase
         val cv = ContentValues().apply {
@@ -255,6 +261,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("linked_instagram_account_ids", linkedInstaIds)
             put("schedule_interval_hours", intervalHours)
             put("is_auto_post_enabled", if (isEnabled) 1 else 0)
+            put("daily_post_times", dailyPostTimes)
         }
         db.update(TABLE_PINTEREST_ACCOUNTS, cv, "id = ?", arrayOf(id.toString()))
     }
@@ -278,6 +285,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val multiIdx = cursor.getColumnIndex("linked_instagram_account_ids")
         val linkedAccountIds = if (multiIdx != -1 && !cursor.isNull(multiIdx)) cursor.getString(multiIdx) else ""
 
+        val dailyTimesIdx = cursor.getColumnIndex("daily_post_times")
+        val dailyPostTimes = if (dailyTimesIdx != -1 && !cursor.isNull(dailyTimesIdx)) cursor.getString(dailyTimesIdx) else "09:00,14:00,20:00"
+
         return PinterestAccount(
             id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
             username = cursor.getString(cursor.getColumnIndexOrThrow("username")),
@@ -293,7 +303,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             nextRunTime = cursor.getLong(cursor.getColumnIndexOrThrow("next_run_time")),
             lastRunTime = cursor.getLong(cursor.getColumnIndexOrThrow("last_run_time")),
             lastRunStatus = cursor.getString(cursor.getColumnIndexOrThrow("last_run_status")) ?: "Idle",
-            lastCheckedTime = cursor.getLong(cursor.getColumnIndexOrThrow("last_checked_time"))
+            lastCheckedTime = cursor.getLong(cursor.getColumnIndexOrThrow("last_checked_time")),
+            dailyPostTimes = dailyPostTimes
         )
     }
 

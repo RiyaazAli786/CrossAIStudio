@@ -796,8 +796,10 @@ class WebLoginActivity : AppCompatActivity() {
                 linkedInstagramAccountId = linkedIgId,
                 scheduleIntervalHours = 1,
                 isAutoPostEnabled = true,
-                nextRunTime = System.currentTimeMillis() + (1 * 3600 * 1000L)
-            )
+                dailyPostTimes = "09:00,14:00,20:00"
+            ).apply {
+                nextRunTime = calculateNextScheduledTime(System.currentTimeMillis())
+            }
 
             val insertedId = repository.savePinterestAccount(account)
             val savedAccount = account.copy(id = insertedId)

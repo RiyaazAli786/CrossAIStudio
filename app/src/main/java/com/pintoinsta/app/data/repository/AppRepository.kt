@@ -15,6 +15,7 @@ import com.pintoinsta.app.notification.NotificationHelper
 import com.pintoinsta.app.util.InstagramCaptionUtils
 import com.pintoinsta.app.util.VideoMuxerUtils
 import com.pintoinsta.app.util.CookieUtils
+import com.pintoinsta.app.util.NetworkUtils
 import android.media.MediaMetadataRetriever
 import android.webkit.CookieManager
 import java.io.File
@@ -77,9 +78,10 @@ class AppRepository(private val context: Context) {
         linkedInstaId: Long?,
         intervalHours: Int,
         isEnabled: Boolean,
-        linkedInstaIds: String = ""
+        linkedInstaIds: String = "",
+        dailyPostTimes: String = "09:00,14:00,20:00"
     ) = withContext(Dispatchers.IO) {
-        dbHelper.updatePinterestAccountSchedule(id, linkedInstaId, intervalHours, isEnabled, linkedInstaIds)
+        dbHelper.updatePinterestAccountSchedule(id, linkedInstaId, intervalHours, isEnabled, linkedInstaIds, dailyPostTimes)
         val acc = dbHelper.getPinterestAccountById(id)
         if (acc != null) {
             val countMsg = if (linkedInstaIds.isNotBlank()) {
@@ -89,15 +91,20 @@ class AppRepository(private val context: Context) {
             } else {
                 "No Instagram account linked"
             }
+            val timesMsg = "${acc.getDailyPostTimeList().size} post(s)/day (${acc.dailyPostTimes})"
             dbHelper.insertPostLog(
                 PostLog(
                     pinId = "SCHEDULE",
                     instagramAccountId = linkedInstaId,
                     status = "INFO",
-                    message = "Updated schedule for '@${acc.username}': Interval ${intervalHours}h, Auto Post ${if (isEnabled) "ON" else "OFF"}, $countMsg"
+                    message = "Updated schedule for '@${acc.username}': Times: $timesMsg, Auto Post ${if (isEnabled) "ON" else "OFF"}, $countMsg"
                 )
             )
         }
+    }
+
+    suspend fun updatePinterestAccountRunInfo(id: Long, lastRunTime: Long, lastRunStatus: String, nextRunTime: Long) = withContext(Dispatchers.IO) {
+        dbHelper.updatePinterestAccountRunInfo(id, lastRunTime, lastRunStatus, nextRunTime)
     }
 
     suspend fun deletePinterestAccount(id: Long): Boolean = withContext(Dispatchers.IO) {
@@ -763,47 +770,40 @@ class AppRepository(private val context: Context) {
             listOfNotNull(primaryTargetId)
         }
 
-        val unpostedPins = dbHelper.getUnpostedPins(1)
-
-        if (unpostedPins.isNotEmpty()) {
-            val pendingPin = unpostedPins.first()
-            val totalPending = dbHelper.getUnpostedPins(50).size
-            Log.d(TAG, "Pending pin available ($totalPending total). Publishing pending pin first: ${pendingPin.pinId}")
-
+        // CRITICAL OFFLINE PROTECTION:
+        // If device is offline, hold the post without advancing nextRunTime!
+        // This ensures the post is NOT bounced and will publish automatically when connection is restored.
+        if (!NetworkUtils.isOnline(context)) {
+            Log.w(TAG, "Device is offline. Holding scheduled post for account '${account.username}' until online.")
             dbHelper.insertPostLog(
                 PostLog(
-                    pinId = pendingPin.pinId,
+                    pinId = "OFFLINE",
                     instagramAccountId = primaryTargetId,
-                    status = "INFO",
-                    message = "Publishing available saved pin '${InstagramCaptionUtils.safeTruncate(pendingPin.title.ifEmpty { pendingPin.searchTerm }, 40)}' ($totalPending remaining)"
+                    status = "WARNING",
+                    message = "Device is offline. Scheduled post held for @${account.username}; will publish automatically when device comes online."
                 )
             )
+            return@withContext Pair(0, "Device is offline. Scheduled post held until connection is restored.")
+        }
 
-            val postRes = if (effectiveTargetAccounts.size > 1) {
-                postPinToMultipleAccounts(pendingPin, effectiveTargetAccounts)
-            } else if (effectiveTargetAccounts.isNotEmpty()) {
-                val singleRes = postSinglePin(pendingPin, effectiveTargetAccounts.first())
-                Pair(if (singleRes.first) 1 else 0, singleRes.second)
-            } else {
-                Pair(0, "No Instagram accounts linked to publish pin")
-            }
+        if (effectiveTargetAccounts.isEmpty()) {
+            val nextRun = account.calculateNextScheduledTime(System.currentTimeMillis())
+            val msg = "No Instagram accounts linked to publish pins"
+            dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), msg, nextRun)
+            return@withContext Pair(0, msg)
+        }
 
-            val nextRun = System.currentTimeMillis() + (account.scheduleIntervalHours * 3600 * 1000L)
-            val statusMsg = if (postRes.first > 0) {
-                "Published available pin ${pendingPin.pinId} (${totalPending - 1} remaining). Results: ${postRes.second}"
-            } else {
-                "Failed publishing pin ${pendingPin.pinId}: ${postRes.second}"
-            }
-            dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), statusMsg, nextRun)
-            Pair(postRes.first, statusMsg)
-        } else {
-            // Requirement: When no pin is available to publish, search from setting saved text
-            Log.d(TAG, "No pending pins available. Searching Pinterest using settings saved text for account '@${account.username}'")
+        // Check unposted pins count. Requirement: Each selected Instagram account gets a UNIQUE post!
+        var unpostedPins = dbHelper.getUnpostedPins(effectiveTargetAccounts.size)
+
+        // If not enough pins available for all selected accounts, search Pinterest using saved keywords
+        if (unpostedPins.size < effectiveTargetAccounts.size) {
+            val needed = effectiveTargetAccounts.size - unpostedPins.size
+            Log.d(TAG, "Need $needed more unique unposted pins. Searching Pinterest using settings saved keywords...")
 
             val savedKeywords = dbHelper.getAllSearchKeywords()
                 .map { it.keyword.trim() }
                 .filter { it.isNotEmpty() }
-
             val keywordsToTry = if (savedKeywords.isNotEmpty()) {
                 savedKeywords.shuffled()
             } else {
@@ -821,48 +821,66 @@ class AppRepository(private val context: Context) {
                     pinId = "SEARCH",
                     instagramAccountId = primaryTargetId,
                     status = "INFO",
-                    message = "No pending pins found. Searching Pinterest using settings saved text (${keywordsToTry.size} keyword(s) available) for @${account.username}..."
+                    message = "Searching Pinterest for fresh unique pins (${keywordsToTry.size} keyword(s) available) for @${account.username}..."
                 )
             )
 
-            var totalSaved = 0
-            var usedKeyword = ""
-
             for (kw in keywordsToTry) {
-                Log.d(TAG, "Searching Pinterest with settings saved keyword '$kw'...")
+                Log.d(TAG, "Searching Pinterest with saved keyword '$kw'...")
                 val res = executePinterestSearch(account.id, kw)
                 if (res.first > 0) {
-                    totalSaved = res.first
-                    usedKeyword = kw
                     break
                 }
             }
 
-            if (totalSaved > 0) {
-                val newlyFound = dbHelper.getUnpostedPins(1)
-                if (newlyFound.isNotEmpty()) {
-                    val pinToPublish = newlyFound.first()
-                    val postRes = if (effectiveTargetAccounts.size > 1) {
-                        postPinToMultipleAccounts(pinToPublish, effectiveTargetAccounts)
-                    } else if (effectiveTargetAccounts.isNotEmpty()) {
-                        val singleRes = postSinglePin(pinToPublish, effectiveTargetAccounts.first())
-                        Pair(if (singleRes.first) 1 else 0, singleRes.second)
-                    } else {
-                        Pair(0, "No Instagram accounts linked to publish newly found pin")
-                    }
+            // Refresh available unposted pins
+            unpostedPins = dbHelper.getUnpostedPins(effectiveTargetAccounts.size)
+        }
 
-                    val nextRun = System.currentTimeMillis() + (account.scheduleIntervalHours * 3600 * 1000L)
-                    val statusMsg = "No pin was available. Searched '$usedKeyword' from Settings: saved $totalSaved pins. Published pin ${pinToPublish.pinId}. Results: ${postRes.second}"
-                    dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), statusMsg, nextRun)
-                    return@withContext Pair(postRes.first, statusMsg)
-                }
+        if (unpostedPins.isEmpty()) {
+            val nextRun = account.calculateNextScheduledTime(System.currentTimeMillis())
+            val failMsg = "No pins available to publish and search returned 0 pins."
+            dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), failMsg, nextRun)
+            return@withContext Pair(0, failMsg)
+        }
+
+        // Publish a UNIQUE pin to each selected Instagram account
+        var totalSuccess = 0
+        val resultsSummary = mutableListOf<String>()
+
+        for (i in effectiveTargetAccounts.indices) {
+            val instaId = effectiveTargetAccounts[i]
+            val instaAccount = dbHelper.getInstagramAccountById(instaId)
+            val igUser = instaAccount?.username ?: "account_$instaId"
+
+            val pinForAccount = unpostedPins.getOrNull(i)
+                ?: dbHelper.getUnpostedPins(1).firstOrNull()
+
+            if (pinForAccount == null) {
+                resultsSummary.add("@$igUser: No unique pin available")
+                continue
             }
 
-            val nextRun = System.currentTimeMillis() + (account.scheduleIntervalHours * 3600 * 1000L)
-            val failMsg = "No pin available to publish. Searched settings saved keywords (${keywordsToTry.take(3).joinToString(", ")}...), but no new pins were found."
-            dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), failMsg, nextRun)
-            Pair(0, failMsg)
+            // Slight delay between publishing to multiple accounts to avoid simultaneous network bursts
+            if (i > 0) {
+                delay(3000L)
+            }
+
+            Log.d(TAG, "Publishing unique pin ${pinForAccount.pinId} to @$igUser")
+            val singleRes = postSinglePin(pinForAccount, instaId)
+            if (singleRes.first) {
+                totalSuccess++
+                resultsSummary.add("@$igUser: Success (${pinForAccount.pinId})")
+            } else {
+                resultsSummary.add("@$igUser: Failed (${singleRes.second})")
+            }
         }
+
+        val nextRun = account.calculateNextScheduledTime(System.currentTimeMillis())
+        val statusMsg = "Published $totalSuccess/${effectiveTargetAccounts.size} unique post(s). ${resultsSummary.joinToString("; ")}"
+        dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), statusMsg, nextRun)
+
+        Pair(totalSuccess, statusMsg)
     }
 
     // --- ANALYTICS ---
@@ -946,6 +964,7 @@ class AppRepository(private val context: Context) {
                     put("scheduleIntervalHours", acc.scheduleIntervalHours)
                     put("isAutoPostEnabled", acc.isAutoPostEnabled)
                     put("linkedInstagramAccountIds", acc.linkedInstagramAccountIds)
+                    put("dailyPostTimes", acc.dailyPostTimes)
                 }
                 pinArray.put(pinObj)
                 unifiedAccounts.put(pinObj)
@@ -1167,6 +1186,7 @@ class AppRepository(private val context: Context) {
                 }
 
                 val resolvedCsrf = csrf.ifBlank { CookieUtils.extractCookieValue(rawCookies, "csrftoken") }
+                val dailyPostTimes = obj.optString("dailyPostTimes", "09:00,14:00,20:00")
 
                 val account = PinterestAccount(
                     username = username,
@@ -1176,8 +1196,11 @@ class AppRepository(private val context: Context) {
                     csrfToken = resolvedCsrf,
                     status = obj.optString("status", "ACTIVE"),
                     scheduleIntervalHours = obj.optInt("scheduleIntervalHours", 1),
-                    isAutoPostEnabled = obj.optBoolean("isAutoPostEnabled", true)
-                )
+                    isAutoPostEnabled = obj.optBoolean("isAutoPostEnabled", true),
+                    dailyPostTimes = dailyPostTimes
+                ).apply {
+                    nextRunTime = calculateNextScheduledTime(System.currentTimeMillis())
+                }
                 dbHelper.insertOrUpdatePinterestAccount(account)
 
                 // Inject into CookieManager across all Pinterest subdomains

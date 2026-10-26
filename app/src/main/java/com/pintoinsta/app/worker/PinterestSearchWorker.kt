@@ -32,6 +32,11 @@ class PinterestSearchWorker(
                 return Result.failure()
             }
 
+            if (!com.pintoinsta.app.util.NetworkUtils.isOnline(applicationContext)) {
+                Log.w(TAG, "Device is offline. PinterestSearchWorker retrying when online.")
+                return Result.retry()
+            }
+
             Log.d(TAG, "Starting scheduled execution for account: ${account.username}")
             val flowResult = repository.executePublishOrSearchFlow(accountId)
             Log.d(TAG, "Scheduled execution completed: ${flowResult.second}")

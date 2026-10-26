@@ -55,8 +55,8 @@ class PinterestFragment : Fragment() {
             onWebLogin = { account -> openWebLogin(account) },
             onRunNow = { account -> runNow(account) },
             onDelete = { account -> confirmDelete(account) },
-            onScheduleChanged = { account, linkedInstaId, interval, isAuto, linkedIdsStr ->
-                updateSchedule(account, linkedInstaId, interval, isAuto, linkedIdsStr)
+            onScheduleChanged = { account, linkedInstaId, interval, isAuto, linkedIdsStr, dailyPostTimes ->
+                updateSchedule(account, linkedInstaId, interval, isAuto, linkedIdsStr, dailyPostTimes)
             }
         )
 
@@ -129,14 +129,20 @@ class PinterestFragment : Fragment() {
         linkedInstaId: Long?,
         interval: Int,
         isAuto: Boolean,
-        linkedIdsStr: String = ""
+        linkedIdsStr: String = "",
+        dailyPostTimes: String = ""
     ) {
         lifecycleScope.launch {
-            repository.updatePinterestAccountSchedule(account.id, linkedInstaId, interval, isAuto, linkedIdsStr)
+            repository.updatePinterestAccountSchedule(account.id, linkedInstaId, interval, isAuto, linkedIdsStr, dailyPostTimes)
             account.linkedInstagramAccountId = linkedInstaId
             account.linkedInstagramAccountIds = linkedIdsStr
             account.scheduleIntervalHours = interval
             account.isAutoPostEnabled = isAuto
+            if (dailyPostTimes.isNotBlank()) {
+                account.dailyPostTimes = dailyPostTimes
+                account.nextRunTime = account.calculateNextScheduledTime(System.currentTimeMillis())
+                repository.updatePinterestAccountRunInfo(account.id, account.lastRunTime, account.lastRunStatus, account.nextRunTime)
+            }
             ScheduleManager.updateAccountSchedule(requireContext(), account)
             Toast.makeText(
                 requireContext(),

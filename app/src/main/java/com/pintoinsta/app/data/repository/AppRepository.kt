@@ -266,12 +266,15 @@ class AppRepository(context: Context) {
      * Requirement 4: On scheduled time, search random text saved in settings
      * using PinteresetSearch.txt & PinterestSearchWithPagination.txt, and save results with pinid as key
      */
-    suspend fun executePinterestSearch(pinterestAccountId: Long): Pair<Int, String> =
+    suspend fun executePinterestSearch(
+        pinterestAccountId: Long,
+        specificKeyword: String? = null
+    ): Pair<Int, String> =
         withContext(Dispatchers.IO) {
             val account = dbHelper.getPinterestAccountById(pinterestAccountId)
                 ?: return@withContext Pair(0, "Pinterest account not found")
 
-            val keyword = getRandomKeyword()
+            val keyword = specificKeyword?.trim()?.takeIf { it.isNotEmpty() } ?: getRandomKeyword()
             Log.d(TAG, "Executing Pinterest Search for account '${account.username}' with keyword: '$keyword'")
 
             // Push notification & activity log: Search started
@@ -549,6 +552,11 @@ class AppRepository(context: Context) {
 
         val targetAccounts = account.getLinkedInstagramIdList()
         val primaryTargetId = targetAccounts.firstOrNull() ?: account.linkedInstagramAccountId
+        val effectiveTargetAccounts = if (targetAccounts.isNotEmpty()) {
+            targetAccounts
+        } else {
+            listOfNotNull(primaryTargetId)
+        }
 
         val unpostedPins = dbHelper.getUnpostedPins(1)
 
@@ -566,11 +574,13 @@ class AppRepository(context: Context) {
                 )
             )
 
-            val postRes = if (targetAccounts.size > 1) {
-                postPinToMultipleAccounts(pendingPin, targetAccounts)
-            } else {
-                val singleRes = postSinglePin(pendingPin, primaryTargetId)
+            val postRes = if (effectiveTargetAccounts.size > 1) {
+                postPinToMultipleAccounts(pendingPin, effectiveTargetAccounts)
+            } else if (effectiveTargetAccounts.isNotEmpty()) {
+                val singleRes = postSinglePin(pendingPin, effectiveTargetAccounts.first())
                 Pair(if (singleRes.first) 1 else 0, singleRes.second)
+            } else {
+                Pair(0, "No Instagram accounts linked to publish pin")
             }
 
             val nextRun = System.currentTimeMillis() + (account.scheduleIntervalHours * 3600 * 1000L)
@@ -582,35 +592,71 @@ class AppRepository(context: Context) {
             dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), statusMsg, nextRun)
             Pair(postRes.first, statusMsg)
         } else {
-            // No items available -> start Pinterest search!
-            Log.d(TAG, "No pending pins available. Starting Pinterest search for account '@${account.username}'")
+            // Requirement: When no pin is available to publish, search from setting saved text
+            Log.d(TAG, "No pending pins available. Searching Pinterest using settings saved text for account '@${account.username}'")
+
+            val savedKeywords = dbHelper.getAllSearchKeywords()
+                .map { it.keyword.trim() }
+                .filter { it.isNotEmpty() }
+
+            val keywordsToTry = if (savedKeywords.isNotEmpty()) {
+                savedKeywords.shuffled()
+            } else {
+                listOf(
+                    "funny cartoon video",
+                    "animated comedy short",
+                    "diy crafts art",
+                    "nature relaxing video",
+                    "trending 3d animation"
+                )
+            }
+
             dbHelper.insertPostLog(
                 PostLog(
                     pinId = "SEARCH",
                     instagramAccountId = primaryTargetId,
                     status = "INFO",
-                    message = "No pending pins found. Searching Pinterest for account '@${account.username}'..."
+                    message = "No pending pins found. Searching Pinterest using settings saved text (${keywordsToTry.size} keyword(s) available) for @${account.username}..."
                 )
             )
 
-            val searchRes = executePinterestSearch(account.id)
-            if (searchRes.first > 0 && targetAccounts.isNotEmpty()) {
+            var totalSaved = 0
+            var usedKeyword = ""
+
+            for (kw in keywordsToTry) {
+                Log.d(TAG, "Searching Pinterest with settings saved keyword '$kw'...")
+                val res = executePinterestSearch(account.id, kw)
+                if (res.first > 0) {
+                    totalSaved = res.first
+                    usedKeyword = kw
+                    break
+                }
+            }
+
+            if (totalSaved > 0) {
                 val newlyFound = dbHelper.getUnpostedPins(1)
                 if (newlyFound.isNotEmpty()) {
-                    val postRes = if (targetAccounts.size > 1) {
-                        postPinToMultipleAccounts(newlyFound.first(), targetAccounts)
-                    } else {
-                        val singleRes = postSinglePin(newlyFound.first(), primaryTargetId)
+                    val pinToPublish = newlyFound.first()
+                    val postRes = if (effectiveTargetAccounts.size > 1) {
+                        postPinToMultipleAccounts(pinToPublish, effectiveTargetAccounts)
+                    } else if (effectiveTargetAccounts.isNotEmpty()) {
+                        val singleRes = postSinglePin(pinToPublish, effectiveTargetAccounts.first())
                         Pair(if (singleRes.first) 1 else 0, singleRes.second)
+                    } else {
+                        Pair(0, "No Instagram accounts linked to publish newly found pin")
                     }
+
                     val nextRun = System.currentTimeMillis() + (account.scheduleIntervalHours * 3600 * 1000L)
-                    val statusMsg = "Searched and saved ${searchRes.first} pins. Published pin ${newlyFound.first().pinId}. Results: ${postRes.second}"
+                    val statusMsg = "No pin was available. Searched '$usedKeyword' from Settings: saved $totalSaved pins. Published pin ${pinToPublish.pinId}. Results: ${postRes.second}"
                     dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), statusMsg, nextRun)
                     return@withContext Pair(postRes.first, statusMsg)
                 }
             }
 
-            searchRes
+            val nextRun = System.currentTimeMillis() + (account.scheduleIntervalHours * 3600 * 1000L)
+            val failMsg = "No pin available to publish. Searched settings saved keywords (${keywordsToTry.take(3).joinToString(", ")}...), but no new pins were found."
+            dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), failMsg, nextRun)
+            Pair(0, failMsg)
         }
     }
 

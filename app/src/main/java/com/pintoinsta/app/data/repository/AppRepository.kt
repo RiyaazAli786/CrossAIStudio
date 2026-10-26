@@ -11,6 +11,7 @@ import com.pintoinsta.app.data.model.SearchKeyword
 import com.pintoinsta.app.network.InstagramClient
 import com.pintoinsta.app.network.PinterestClient
 import com.pintoinsta.app.notification.NotificationHelper
+import com.pintoinsta.app.util.InstagramCaptionUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
@@ -214,8 +215,9 @@ class AppRepository(context: Context) {
         val summaryMessages = mutableListOf<String>()
 
         for (pin in unpostedPins) {
-            val caption = if (pin.title.isNotBlank()) pin.title else pin.searchTerm
-            Log.d(TAG, "Posting pin ${pin.pinId} to Instagram (@${instaAccount.username}) with caption: '$caption'")
+            val rawCaption = if (pin.title.isNotBlank()) pin.title else pin.description.ifEmpty { pin.searchTerm }
+            val caption = InstagramCaptionUtils.cleanAndFormatCaption(rawCaption)
+            Log.d(TAG, "Posting pin ${pin.pinId} to Instagram (@${instaAccount.username}) with caption: '$caption' (raw: '$rawCaption')")
 
             // Push notification: Post started
             notificationHelper.notifyPostStarted(pin.pinId, instaAccount.username)

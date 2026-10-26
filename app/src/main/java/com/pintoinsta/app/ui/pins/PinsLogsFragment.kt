@@ -22,6 +22,7 @@ import com.pintoinsta.app.data.model.SavedPin
 import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.databinding.FragmentPinsLogsBinding
 import com.pintoinsta.app.ui.viewer.PostViewerActivity
+import com.pintoinsta.app.util.InstagramCaptionUtils
 import kotlinx.coroutines.launch
 
 class PinsLogsFragment : Fragment() {
@@ -130,7 +131,8 @@ class PinsLogsFragment : Fragment() {
         val videoView = dialog.findViewById<VideoView>(R.id.videoView)
         val progressBar = dialog.findViewById<ProgressBar>(R.id.pbVideoLoading)
 
-        val caption = if (pin.title.isNotBlank()) pin.title else pin.searchTerm
+        val rawCaption = if (pin.title.isNotBlank()) pin.title else pin.description.ifEmpty { pin.searchTerm }
+        val caption = InstagramCaptionUtils.cleanAndFormatCaption(rawCaption)
         tvTitle.text = caption
 
         btnClose.setOnClickListener {

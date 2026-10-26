@@ -9,6 +9,7 @@ import coil.load
 import com.pintoinsta.app.R
 import com.pintoinsta.app.data.model.SavedPin
 import com.pintoinsta.app.databinding.ItemSavedPinBinding
+import com.pintoinsta.app.util.InstagramCaptionUtils
 
 class SavedPinsAdapter(
     private var pins: List<SavedPin>,
@@ -44,7 +45,8 @@ class SavedPinsAdapter(
             val context = binding.root.context
 
             binding.tvPinId.text = "Pin ID: ${pin.pinId}"
-            val caption = if (pin.title.isNotBlank()) pin.title else pin.description.ifEmpty { pin.searchTerm }
+            val rawCaption = if (pin.title.isNotBlank()) pin.title else pin.description.ifEmpty { pin.searchTerm }
+            val caption = InstagramCaptionUtils.cleanAndFormatCaption(rawCaption)
             binding.tvPinCaption.text = caption
             binding.tvSearchKeyword.text = "Keyword: ${pin.searchTerm} • ${pin.mediaType}"
 

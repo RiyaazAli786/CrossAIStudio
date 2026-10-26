@@ -3,6 +3,7 @@ package com.pintoinsta.app.network
 import android.util.Log
 import com.pintoinsta.app.data.model.PinterestAccount
 import com.pintoinsta.app.data.model.SavedPin
+import com.pintoinsta.app.util.InstagramCaptionUtils
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -290,9 +291,11 @@ class PinterestClient(
                 // Check pin id (must be present)
                 val pinId = item.optString("id").takeIf { it.isNotBlank() } ?: continue
 
-                // Title: if empty, grid_title
-                val title = item.optString("title").ifEmpty { item.optString("grid_title") }.trim()
-                val description = item.optString("description").trim()
+                // Title: if empty, grid_title (clean HTML entities & normalize emojis)
+                val rawTitle = item.optString("title").ifEmpty { item.optString("grid_title") }.trim()
+                val title = InstagramCaptionUtils.cleanAndFormatCaption(rawTitle)
+                val rawDescription = item.optString("description").trim()
+                val description = InstagramCaptionUtils.cleanAndFormatCaption(rawDescription)
 
                 // Media URL extraction: check videos first, then images
                 var mediaUrl = ""

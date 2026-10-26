@@ -12,6 +12,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.pintoinsta.app.MainActivity
 import com.pintoinsta.app.R
 import com.pintoinsta.app.ui.viewer.PostViewerActivity
+import com.pintoinsta.app.util.InstagramCaptionUtils
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -189,7 +190,7 @@ class NotificationHelper(private val context: Context) {
         postUrl: String? = null,
         instagramAccountId: Long? = null
     ) {
-        val truncatedCaption = if (caption.length > 50) caption.substring(0, 47) + "..." else caption
+        val truncatedCaption = InstagramCaptionUtils.safeTruncate(caption, 50, appendEllipsis = true)
         val bodyText = if (!postUrl.isNullOrBlank()) {
             "Published Pin $pinId to @$igUsername!\n$postUrl"
         } else {

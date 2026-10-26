@@ -9,6 +9,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import com.pintoinsta.app.util.InstagramCaptionUtils
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -286,11 +287,36 @@ class InstagramClient(
 
         // Step 3: Configure post via Instagram Media Configure API (GramDominator InstaFunct.cs: ConfigureWeb)
         val configureUrl = "https://www.instagram.com/api/v1/media/configure/"
-        val escapedCaption = URLEncoder.encode(caption, "UTF-8")
 
-        val formBody = FormBody.Builder()
+        // Clean, decode HTML entities, normalize Unicode NFC, and preserve emojis safely
+        val cleanCaption = InstagramCaptionUtils.cleanAndFormatCaption(caption)
+        Log.d(TAG, "Configuring post: uploadId=$uploadId, cleanCaption='$cleanCaption' (raw: '$caption')")
+
+        // Build configure JSON object with properly handled emojis & special characters
+        val jsonPayload = JSONObject().apply {
+            put("archive_only", "false")
+            put("caption", cleanCaption)
+            put("clips_share_preview_to_feed", "1")
+            put("disable_comments", "0")
+            put("disable_oa_reuse", "false")
+            put("igtv_share_preview_to_feed", "1")
+            put("is_meta_only_post", "0")
+            put("is_unified_video", "1")
+            put("like_and_view_counts_disabled", "0")
+            put("media_share_flow", "creation_flow")
+            put("share_to_facebook", "")
+            put("share_to_fb_destination_type", "USER")
+            put("source_type", "library")
+            put("upload_id", uploadId)
+            put("video_subtitles_enabled", "0")
+            put("geotag_enabled", "false")
+        }
+
+        // Primary Attempt: FormBody with explicit UTF-8 encoding and signed_body fallback
+        val formBody = FormBody.Builder(Charsets.UTF_8)
             .add("archive_only", "false")
-            .add("caption", caption)
+            .add("caption", cleanCaption)
+            .add("signed_body", "SIGNATURE." + jsonPayload.toString())
             .add("clips_share_preview_to_feed", "1")
             .add("disable_comments", "0")
             .add("disable_oa_reuse", "false")
@@ -321,9 +347,44 @@ class InstagramClient(
             .header("Cookie", account.cookies)
             .build()
 
-        val configRes = client.newCall(configureReq).execute()
-        val configBody = configRes.body?.string() ?: ""
-        Log.d(TAG, "Configure response HTTP ${configRes.code}: $configBody")
+        var configRes = client.newCall(configureReq).execute()
+        var configBody = configRes.body?.string() ?: ""
+        Log.d(TAG, "Configure (FormBody) response HTTP ${configRes.code}: $configBody")
+
+        // Secondary Attempt: If FormBody fails or is rejected, retry with direct JSON payload (application/json; charset=utf-8)
+        if (!configRes.isSuccessful || !configBody.contains("\"status\":\"ok\"")) {
+            Log.w(TAG, "Form configure not ok, retrying with application/json UTF-8 payload...")
+            try {
+                val jsonRequestBody = jsonPayload.toString()
+                    .toByteArray(Charsets.UTF_8)
+                    .toRequestBody("application/json; charset=utf-8".toMediaType())
+
+                val jsonReq = Request.Builder()
+                    .url(configureUrl)
+                    .post(jsonRequestBody)
+                    .header("Host", "www.instagram.com")
+                    .header("User-Agent", DEFAULT_USER_AGENT)
+                    .header("Origin", "https://www.instagram.com")
+                    .header("Referer", "https://www.instagram.com/")
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .header("X-Instagram-AJAX", "1")
+                    .header("X-CSRFToken", csrf)
+                    .header("X-IG-App-ID", IG_APP_ID)
+                    .header("X-Requested-With", "XMLHttpRequest")
+                    .header("Cookie", account.cookies)
+                    .build()
+
+                val retryRes = client.newCall(jsonReq).execute()
+                val retryBody = retryRes.body?.string() ?: ""
+                Log.d(TAG, "Configure (JSON) response HTTP ${retryRes.code}: $retryBody")
+                if (retryRes.isSuccessful && retryBody.contains("\"status\":\"ok\"")) {
+                    configRes = retryRes
+                    configBody = retryBody
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "JSON configure retry error: ${e.message}")
+            }
+        }
 
         return if (configRes.isSuccessful && configBody.contains("\"status\":\"ok\"")) {
             var postUrl: String? = null

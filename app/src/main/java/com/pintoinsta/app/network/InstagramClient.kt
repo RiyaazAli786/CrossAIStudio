@@ -1,5 +1,6 @@
 package com.pintoinsta.app.network
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import com.pintoinsta.app.data.model.InstagramAccount
@@ -10,6 +11,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -116,6 +118,83 @@ class InstagramClient(
     /**
      * Requirement 5 & 7: Post Photo to Instagram using GramDominator architecture
      */
+    data class PreparedImage(
+        val bytes: ByteArray,
+        val width: Int,
+        val height: Int
+    )
+
+    /**
+     * Normalizes raw image bytes for Instagram:
+     * 1. Decodes bitmap safely
+     * 2. Adjusts aspect ratio within Instagram's allowed range [0.8, 1.91] by center-cropping
+     * 3. Scales max width to 1080px
+     * 4. Re-encodes to standard clean JPEG
+     * This prevents 'Image upload transcode non-retryable failure'.
+     */
+    fun prepareImageForInstagram(rawBytes: ByteArray): PreparedImage? {
+        return try {
+            val originalBitmap = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size) ?: return null
+            var bmp = originalBitmap
+
+            val origW = bmp.width
+            val origH = bmp.height
+            if (origW <= 0 || origH <= 0) return null
+
+            val currentRatio = origW.toFloat() / origH.toFloat()
+            val minRatio = 0.80f // 4:5 vertical
+            val maxRatio = 1.91f // 1.91:1 horizontal
+
+            if (currentRatio < minRatio) {
+                // Too tall, crop height to fit 0.8 aspect ratio
+                val targetHeight = (origW / minRatio).toInt()
+                val yOffset = ((origH - targetHeight) / 2).coerceAtLeast(0)
+                val safeHeight = targetHeight.coerceAtMost(origH - yOffset)
+                val cropped = Bitmap.createBitmap(bmp, 0, yOffset, origW, safeHeight)
+                if (bmp != originalBitmap) bmp.recycle()
+                bmp = cropped
+            } else if (currentRatio > maxRatio) {
+                // Too wide, crop width to fit 1.91 aspect ratio
+                val targetWidth = (origH * maxRatio).toInt()
+                val xOffset = ((origW - targetWidth) / 2).coerceAtLeast(0)
+                val safeWidth = targetWidth.coerceAtMost(origW - xOffset)
+                val cropped = Bitmap.createBitmap(bmp, xOffset, 0, safeWidth, origH)
+                if (bmp != originalBitmap) bmp.recycle()
+                bmp = cropped
+            }
+
+            // Scale down if width > 1080
+            val finalW: Int
+            val finalH: Int
+            if (bmp.width > 1080) {
+                val scale = 1080f / bmp.width.toFloat()
+                finalW = 1080
+                finalH = (bmp.height * scale).toInt()
+                val scaled = Bitmap.createScaledBitmap(bmp, finalW, finalH, true)
+                if (bmp != originalBitmap) bmp.recycle()
+                bmp = scaled
+            } else {
+                finalW = bmp.width
+                finalH = bmp.height
+            }
+
+            val baos = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.JPEG, 92, baos)
+            val normalizedBytes = baos.toByteArray()
+
+            if (bmp != originalBitmap) bmp.recycle()
+            originalBitmap.recycle()
+
+            PreparedImage(normalizedBytes, finalW, finalH)
+        } catch (e: Exception) {
+            Log.e(TAG, "prepareImageForInstagram error", e)
+            null
+        }
+    }
+
+    /**
+     * Requirement 5 & 7: Post Photo to Instagram using GramDominator architecture
+     */
     fun postPhoto(
         account: InstagramAccount,
         imageBytes: ByteArray,
@@ -128,18 +207,17 @@ class InstagramClient(
             return Pair(false, "Missing CSRF token in Instagram account cookies")
         }
 
-        // Measure image dimensions
-        val (width, height) = try {
-            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeStream(ByteArrayInputStream(imageBytes), null, options)
-            val w = if (options.outWidth > 0) options.outWidth else 1080
-            val h = if (options.outHeight > 0) options.outHeight else 1080
-            Pair(w, h)
-        } catch (e: Exception) {
-            Pair(1080, 1080)
+        // Normalize image bytes to prevent Instagram transcode non-retryable failure
+        val prepared = prepareImageForInstagram(imageBytes)
+        if (prepared == null) {
+            return Pair(false, "Invalid image format: Failed to transcode/decode image bytes for Instagram upload")
         }
 
-        Log.d(TAG, "Starting Instagram photo upload: uploadId=$uploadId, dim=${width}x${height}, size=${imageBytes.size}")
+        val uploadBytes = prepared.bytes
+        val width = prepared.width
+        val height = prepared.height
+
+        Log.d(TAG, "Starting Instagram photo upload: uploadId=$uploadId, dim=${width}x${height}, size=${uploadBytes.size}")
 
         // Step 1: Preflight OPTIONS request (as done in GramDominator InstaFunct.cs: UploadImage)
         val uploadUrl = "https://i.instagram.com/rupload_igphoto/fb_uploader_$uploadId"
@@ -172,7 +250,7 @@ class InstagramClient(
             put("upload_media_width", width)
         }.toString()
 
-        val imageRequestBody = imageBytes.toRequestBody("image/jpeg".toMediaType())
+        val imageRequestBody = uploadBytes.toRequestBody("image/jpeg".toMediaType())
 
         val uploadReq = Request.Builder()
             .url(uploadUrl)
@@ -187,7 +265,7 @@ class InstagramClient(
             .header("X-IG-App-ID", IG_APP_ID)
             .header("X-Entity-Type", "image/jpeg")
             .header("X-Entity-Name", "fb_uploader_$uploadId")
-            .header("X-Entity-Length", imageBytes.size.toString())
+            .header("X-Entity-Length", uploadBytes.size.toString())
             .header("Offset", "0")
             .header("Cookie", account.cookies)
             .build()

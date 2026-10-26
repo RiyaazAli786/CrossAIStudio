@@ -3,6 +3,8 @@
     <color name="primary">#E60023</color>
     <color name="primary_variant">#B8001B</color>
     <color name="on_primary">#FFFFFF</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
 
     <color name="secondary">#E1306C</color>
     <color name="secondary_variant">#C13584</color>

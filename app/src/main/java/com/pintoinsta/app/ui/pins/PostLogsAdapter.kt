@@ -1,7 +1,11 @@
 package com.pintoinsta.app.ui.pins
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.pintoinsta.app.R
@@ -51,6 +55,22 @@ class PostLogsAdapter(
             } else {
                 binding.ivLogIcon.setImageResource(R.drawable.ic_error)
                 binding.ivLogIcon.setColorFilter(ContextCompat.getColor(context, R.color.status_red))
+            }
+
+            val copyAction = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val logText = "[$timeStr] Pin ID: ${log.pinId} [${log.status}]\n${log.message}"
+                val clip = ClipData.newPlainText("CrossAIStudio Log", logText)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(context, "Log copied to clipboard", Toast.LENGTH_SHORT).show()
+            }
+
+            binding.btnCopyLog.setOnClickListener {
+                copyAction()
+            }
+
+            binding.root.setOnClickListener {
+                copyAction()
             }
         }
     }

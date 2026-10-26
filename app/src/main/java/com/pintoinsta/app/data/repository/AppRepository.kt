@@ -131,6 +131,10 @@ class AppRepository(context: Context) {
         dbHelper.getUnpostedPins(limit)
     }
 
+    suspend fun deleteSavedPin(pinId: String): Boolean = withContext(Dispatchers.IO) {
+        dbHelper.deleteSavedPin(pinId) > 0
+    }
+
     // --- LOGS ---
     suspend fun getRecentLogs(): List<PostLog> = withContext(Dispatchers.IO) {
         dbHelper.getRecentPostLogs(50)
@@ -216,12 +220,21 @@ class AppRepository(context: Context) {
             // Push notification: Post started
             notificationHelper.notifyPostStarted(pin.pinId, instaAccount.username)
 
-            val mediaBytes = instagramClient.downloadMedia(pin.mediaUrl)
+            val imageUrl = pin.getEffectiveImageUrl()
+            if (imageUrl.isBlank()) {
+                val err = "No valid image format found for Pin ${pin.pinId} (raw media was ${pin.mediaType})"
+                dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
+                summaryMessages.add("Pin ${pin.pinId}: No valid image")
+                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, err)
+                continue
+            }
+
+            val mediaBytes = instagramClient.downloadMedia(imageUrl)
             if (mediaBytes == null || mediaBytes.isEmpty()) {
-                val err = "Failed downloading pin media from ${pin.mediaUrl}"
+                val err = "Failed downloading pin image from $imageUrl"
                 dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
                 summaryMessages.add("Pin ${pin.pinId}: Download failed")
-                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, "Media download failed")
+                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, "Image download failed")
                 continue
             }
 

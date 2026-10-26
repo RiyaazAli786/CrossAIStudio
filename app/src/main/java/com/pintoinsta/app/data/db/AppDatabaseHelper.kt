@@ -446,6 +446,11 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         db.update(TABLE_SAVED_PINS, cv, "pin_id = ?", arrayOf(pinId))
     }
 
+    fun deleteSavedPin(pinId: String): Int {
+        val db = writableDatabase
+        return db.delete(TABLE_SAVED_PINS, "pin_id = ?", arrayOf(pinId))
+    }
+
     private fun cursorToSavedPin(cursor: Cursor): SavedPin {
         return SavedPin(
             pinId = cursor.getString(cursor.getColumnIndexOrThrow("pin_id")),

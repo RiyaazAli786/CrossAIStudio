@@ -213,22 +213,54 @@ class PinterestClient(
      */
     fun checkAccountStatus(account: PinterestAccount): Pair<Boolean, String> {
         return try {
-            val request = Request.Builder()
-                .url("https://www.pinterest.com/resource/UserSettingsResource/get/")
+            val cookies = account.cookies
+            if (!cookies.contains("_auth=1")) {
+                return Pair(false, "Session Expired (Not Logged In)")
+            }
+
+            val csrf = account.csrfToken.ifEmpty { extractCsrfFromCookies(cookies) }
+
+            // Method 1: Check UserSettingsResource API with valid query parameters and CSRF
+            try {
+                val apiUrl = "https://www.pinterest.com/resource/UserSettingsResource/get/?source_url=%2Fsettings%2F&data=%7B%22options%22%3A%7B%7D%2C%22context%22%3A%7B%7D%7D"
+                val apiReq = Request.Builder()
+                    .url(apiUrl)
+                    .get()
+                    .header("User-Agent", DEFAULT_USER_AGENT)
+                    .header("Accept", "application/json, text/javascript, */*; q=0.01")
+                    .header("x-requested-with", "XMLHttpRequest")
+                    .header("x-csrftoken", csrf)
+                    .header("x-pinterest-appstate", "active")
+                    .header("Referer", "https://www.pinterest.com/settings/")
+                    .header("Cookie", cookies)
+                    .build()
+
+                val apiRes = client.newCall(apiReq).execute()
+                val apiBody = apiRes.body?.string() ?: ""
+                if (apiRes.isSuccessful && (apiBody.contains("\"status\":\"success\"") || apiBody.contains("\"status\": \"success\"") || apiBody.contains(account.username))) {
+                    return Pair(true, "Active")
+                }
+            } catch (_: Exception) {
+                // Fallback to Method 2
+            }
+
+            // Method 2: Request settings web page and verify no redirect to /login
+            val webReq = Request.Builder()
+                .url("https://www.pinterest.com/settings/")
                 .get()
                 .header("User-Agent", DEFAULT_USER_AGENT)
-                .header("Accept", "application/json, text/javascript, */*; q=0.01")
-                .header("x-requested-with", "XMLHttpRequest")
-                .header("Cookie", account.cookies)
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Cookie", cookies)
                 .build()
 
-            val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: ""
+            val webRes = client.newCall(webReq).execute()
+            val finalUrl = webRes.request.url.toString()
+            val webBody = webRes.body?.string() ?: ""
 
-            if (response.isSuccessful && (body.contains("\"status\": \"success\"") || body.contains("\"status\":\"success\"") || body.contains("user"))) {
+            if (webRes.isSuccessful && !finalUrl.contains("/login") && !webBody.contains("name=\"login_user_form\"")) {
                 Pair(true, "Active")
             } else {
-                Pair(false, "Session Expired (HTTP ${response.code})")
+                Pair(false, "Session Expired (Logged Out)")
             }
         } catch (e: Exception) {
             Pair(false, "Network error: ${e.message}")

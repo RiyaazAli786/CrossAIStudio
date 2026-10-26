@@ -1,6 +1,7 @@
 package com.pintoinsta.app.ui.pins
 
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
@@ -10,7 +11,9 @@ import com.pintoinsta.app.data.model.SavedPin
 import com.pintoinsta.app.databinding.ItemSavedPinBinding
 
 class SavedPinsAdapter(
-    private var pins: List<SavedPin>
+    private var pins: List<SavedPin>,
+    var onPlayVideoClick: ((SavedPin) -> Unit)? = null,
+    var onDeletePinClick: ((SavedPin) -> Unit)? = null
 ) : RecyclerView.Adapter<SavedPinsAdapter.ViewHolder>() {
 
     fun updateData(newPins: List<SavedPin>) {
@@ -54,14 +57,31 @@ class SavedPinsAdapter(
                 binding.tvPinStatus.setTextColor(ContextCompat.getColor(context, R.color.status_orange))
             }
 
-            if (pin.mediaUrl.isNotEmpty()) {
-                binding.ivPinThumb.load(pin.mediaUrl) {
+            // Use getEffectiveImageUrl() to display high-res preview thumbnail even for video pins
+            val thumbUrl = pin.getEffectiveImageUrl()
+            if (thumbUrl.isNotEmpty()) {
+                binding.ivPinThumb.load(thumbUrl) {
                     crossfade(true)
                     placeholder(R.drawable.ic_pins)
                     error(R.drawable.ic_pins)
                 }
             } else {
                 binding.ivPinThumb.setImageResource(R.drawable.ic_pins)
+            }
+
+            val hasVideo = pin.mediaType == "VIDEO" || pin.getVideoStreamUrl() != null
+            binding.ivPlayOverlay.visibility = if (hasVideo) View.VISIBLE else View.GONE
+
+            if (hasVideo) {
+                binding.layoutPinThumb.setOnClickListener {
+                    onPlayVideoClick?.invoke(pin)
+                }
+            } else {
+                binding.layoutPinThumb.setOnClickListener(null)
+            }
+
+            binding.btnDeletePin.setOnClickListener {
+                onDeletePinClick?.invoke(pin)
             }
         }
     }

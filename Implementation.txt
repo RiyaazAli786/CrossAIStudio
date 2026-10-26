@@ -1,0 +1,8 @@
+Create an android app with following functionality
+1.option to add Instagram and pinterest account,I will login in webview then it will grab the session and save in local storage
+2.Inside setting i need option to add multiple search text and save it in local storage
+3.on each pinterest account card i need option to select Instagram account and scheduling option
+4.on scheduled time it will search from random text saved in setting using those two text file PinteresetSearch.txt and PinterestSearchWithPagination.txt and save the result with pinid as key
+5.each day it will download each pin and post on Instagram with title as caption fetched from pinterest and if title not there use search text as caption
+6.option to check account status and webview login on both pinterest and Instagram account card also show status of account on card
+7.for Instagram posting including functionality from D:\SocialX\gramdominator-library

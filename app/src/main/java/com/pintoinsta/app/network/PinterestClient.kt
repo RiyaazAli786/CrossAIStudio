@@ -1,0 +1,340 @@
+package com.pintoinsta.app.network
+
+import android.util.Log
+import com.pintoinsta.app.data.model.PinterestAccount
+import com.pintoinsta.app.data.model.SavedPin
+import okhttp3.FormBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
+
+class PinterestClient(
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
+) {
+
+    companion object {
+        private const val TAG = "PinterestClient"
+        private const val BASE_URL = "https://in.pinterest.com/resource/BaseSearchResource/get/"
+        private const val DEFAULT_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    }
+
+    data class SearchResult(
+        val pins: List<SavedPin>,
+        val bookmark: String?,
+        val success: Boolean,
+        val errorMessage: String? = null
+    )
+
+    /**
+     * Requirement 4: Search using template from PinteresetSearch.txt
+     */
+    fun searchInitial(
+        account: PinterestAccount,
+        keyword: String
+    ): SearchResult {
+        return try {
+            val encodedQuery = URLEncoder.encode(keyword, "UTF-8")
+            val sourceUrl = "/search/videos/?filter_location=1&q=$encodedQuery&rs=content_type_filter"
+            val encodedSourceUrl = URLEncoder.encode(sourceUrl, "UTF-8")
+
+            val optionsJson = JSONObject().apply {
+                put("query", keyword)
+                put("scope", "videos")
+                put("appliedProductFilters", "---")
+                put("domains", JSONObject.NULL)
+                put("user", JSONObject.NULL)
+                put("seoDrawerEnabled", false)
+                put("applied_unified_filters", JSONObject.NULL)
+                put("auto_correction_disabled", false)
+                put("filter_genai", false)
+                put("journey_depth", JSONObject.NULL)
+                put("source_id", JSONObject.NULL)
+                put("source_module_id", JSONObject.NULL)
+                put("source_url", sourceUrl)
+                put("static_feed", false)
+                put("selected_one_bar_modules", JSONObject.NULL)
+                put("query_pin_sigs", JSONObject.NULL)
+                put("page_size", JSONObject.NULL)
+                put("gated", JSONObject.NULL)
+                put("price_max", JSONObject.NULL)
+                put("price_min", JSONObject.NULL)
+                put("query_image_pins", JSONObject.NULL)
+                put("request_params", JSONObject.NULL)
+                put("top_pin_ids", JSONObject.NULL)
+                put("article", JSONObject.NULL)
+                put("corpus", JSONObject.NULL)
+                put("filters", JSONObject.NULL)
+                put("rs", "content_type_filter")
+            }
+
+            val dataJson = JSONObject().apply {
+                put("options", optionsJson)
+                put("context", JSONObject())
+            }
+
+            val encodedData = URLEncoder.encode(dataJson.toString(), "UTF-8")
+            val fullUrl = "$BASE_URL?source_url=$encodedSourceUrl&data=$encodedData&_=${System.currentTimeMillis()}"
+
+            val csrf = account.csrfToken.ifEmpty { extractCsrfFromCookies(account.cookies) }
+
+            val requestBuilder = Request.Builder()
+                .url(fullUrl)
+                .get()
+                .header("Host", "in.pinterest.com")
+                .header("User-Agent", DEFAULT_USER_AGENT)
+                .header("Accept", "application/json, text/javascript, */*; q=0.01")
+                .header("Accept-Language", "en-GB,en-US;q=0.9,en;q=0.8")
+                .header("x-requested-with", "XMLHttpRequest")
+                .header("x-pinterest-appstate", "active")
+                .header("x-pinterest-pws-handler", "www/search/[scope].js")
+                .header("x-app-version", "472496f")
+                .header("Referer", "https://in.pinterest.com/")
+                .header("Origin", "https://in.pinterest.com")
+                .header("Cookie", account.cookies)
+
+            if (csrf.isNotBlank()) {
+                requestBuilder.header("x-csrftoken", csrf)
+            }
+
+            val response = client.newCall(requestBuilder.build()).execute()
+            val body = response.body?.string() ?: ""
+
+            if (!response.isSuccessful) {
+                Log.e(TAG, "Search failed HTTP ${response.code}: $body")
+                return SearchResult(emptyList(), null, false, "HTTP ${response.code}")
+            }
+
+            parseSearchResponse(body, account.id, keyword)
+        } catch (e: Exception) {
+            Log.e(TAG, "searchInitial error", e)
+            SearchResult(emptyList(), null, false, e.message)
+        }
+    }
+
+    /**
+     * Requirement 4: Pagination Search using template from PinterestSearchWithPagination.txt
+     */
+    fun searchWithPagination(
+        account: PinterestAccount,
+        keyword: String,
+        bookmark: String
+    ): SearchResult {
+        return try {
+            val encodedQuery = URLEncoder.encode(keyword, "UTF-8")
+            val sourceUrl = "/search/videos/?filter_location=1&q=$encodedQuery&rs=content_type_filter"
+
+            val optionsJson = JSONObject().apply {
+                put("query", keyword)
+                put("scope", "videos")
+                put("appliedProductFilters", "---")
+                put("domains", JSONObject.NULL)
+                put("user", JSONObject.NULL)
+                put("seoDrawerEnabled", false)
+                put("applied_unified_filters", JSONObject.NULL)
+                put("auto_correction_disabled", false)
+                put("filter_genai", false)
+                put("journey_depth", JSONObject.NULL)
+                put("source_id", JSONObject.NULL)
+                put("source_module_id", JSONObject.NULL)
+                put("source_url", sourceUrl)
+                put("static_feed", false)
+                put("selected_one_bar_modules", JSONObject.NULL)
+                put("query_pin_sigs", JSONObject.NULL)
+                put("page_size", JSONObject.NULL)
+                put("gated", JSONObject.NULL)
+                put("price_max", JSONObject.NULL)
+                put("price_min", JSONObject.NULL)
+                put("query_image_pins", JSONObject.NULL)
+                put("request_params", JSONObject.NULL)
+                put("top_pin_ids", JSONObject.NULL)
+                put("article", JSONObject.NULL)
+                put("corpus", JSONObject.NULL)
+                put("filters", JSONObject.NULL)
+                put("rs", "content_type_filter")
+                put("bookmarks", org.json.JSONArray().put(bookmark))
+            }
+
+            val dataJson = JSONObject().apply {
+                put("options", optionsJson)
+                put("context", JSONObject())
+            }
+
+            val formBody = FormBody.Builder()
+                .add("source_url", sourceUrl)
+                .add("data", dataJson.toString())
+                .build()
+
+            val csrf = account.csrfToken.ifEmpty { extractCsrfFromCookies(account.cookies) }
+
+            val requestBuilder = Request.Builder()
+                .url(BASE_URL)
+                .post(formBody)
+                .header("Host", "in.pinterest.com")
+                .header("User-Agent", DEFAULT_USER_AGENT)
+                .header("Accept", "application/json, text/javascript, */*; q=0.01")
+                .header("Accept-Language", "en-GB,en-US;q=0.9,en;q=0.8")
+                .header("x-requested-with", "XMLHttpRequest")
+                .header("x-pinterest-appstate", "active")
+                .header("x-pinterest-pws-handler", "www/search/[scope].js")
+                .header("x-app-version", "472496f")
+                .header("Referer", "https://in.pinterest.com/")
+                .header("Origin", "https://in.pinterest.com")
+                .header("Cookie", account.cookies)
+
+            if (csrf.isNotBlank()) {
+                requestBuilder.header("x-csrftoken", csrf)
+            }
+
+            val response = client.newCall(requestBuilder.build()).execute()
+            val body = response.body?.string() ?: ""
+
+            if (!response.isSuccessful) {
+                Log.e(TAG, "Pagination search failed HTTP ${response.code}: $body")
+                return SearchResult(emptyList(), null, false, "HTTP ${response.code}")
+            }
+
+            parseSearchResponse(body, account.id, keyword)
+        } catch (e: Exception) {
+            Log.e(TAG, "searchWithPagination error", e)
+            SearchResult(emptyList(), null, false, e.message)
+        }
+    }
+
+    /**
+     * Requirement 6: Check Pinterest account session status
+     */
+    fun checkAccountStatus(account: PinterestAccount): Pair<Boolean, String> {
+        return try {
+            val request = Request.Builder()
+                .url("https://www.pinterest.com/resource/UserSettingsResource/get/")
+                .get()
+                .header("User-Agent", DEFAULT_USER_AGENT)
+                .header("Accept", "application/json, text/javascript, */*; q=0.01")
+                .header("x-requested-with", "XMLHttpRequest")
+                .header("Cookie", account.cookies)
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+
+            if (response.isSuccessful && (body.contains("\"status\": \"success\"") || body.contains("\"status\":\"success\"") || body.contains("user"))) {
+                Pair(true, "Active")
+            } else {
+                Pair(false, "Session Expired (HTTP ${response.code})")
+            }
+        } catch (e: Exception) {
+            Pair(false, "Network error: ${e.message}")
+        }
+    }
+
+    private fun parseSearchResponse(
+        jsonString: String,
+        accountId: Long,
+        keyword: String
+    ): SearchResult {
+        val pinsList = mutableListOf<SavedPin>()
+        var nextBookmark: String? = null
+
+        try {
+            val root = JSONObject(jsonString)
+            val resourceResponse = root.optJSONObject("resource_response") ?: return SearchResult(emptyList(), null, false, "Invalid JSON structure")
+
+            nextBookmark = resourceResponse.optString("bookmark", "").takeIf { it.isNotBlank() && it != "-end-" }
+
+            val dataObj = resourceResponse.optJSONObject("data")
+            val resultsArr = dataObj?.optJSONArray("results") ?: org.json.JSONArray()
+
+            for (i in 0 until resultsArr.length()) {
+                val item = resultsArr.optJSONObject(i) ?: continue
+
+                // Check pin id (must be present)
+                val pinId = item.optString("id").takeIf { it.isNotBlank() } ?: continue
+
+                // Title: if empty, grid_title
+                val title = item.optString("title").ifEmpty { item.optString("grid_title") }.trim()
+                val description = item.optString("description").trim()
+
+                // Media URL extraction: check videos first, then images
+                var mediaUrl = ""
+                var mediaType = "IMAGE"
+
+                val videosObj = item.optJSONObject("videos")
+                if (videosObj != null) {
+                    val videoListObj = videosObj.optJSONObject("video_list")
+                    if (videoListObj != null) {
+                        // Look for V_HLSV4 or V_720P or MP4 or mobile stream
+                        val keys = listOf("V_720P", "V_HLSV4", "V_HLSV3_MOBILE", "V_EXP7")
+                        for (key in keys) {
+                            val vObj = videoListObj.optJSONObject(key)
+                            val vUrl = vObj?.optString("url") ?: ""
+                            if (vUrl.isNotBlank()) {
+                                mediaUrl = vUrl
+                                mediaType = "VIDEO"
+                                break
+                            }
+                        }
+                    }
+                }
+
+                // If mediaUrl is empty or is HLS, also grab highest res original image as fallback or primary
+                val imagesObj = item.optJSONObject("images")
+                var origImageUrl = ""
+                if (imagesObj != null) {
+                    val orig = imagesObj.optJSONObject("orig")
+                    val img736 = imagesObj.optJSONObject("736x")
+                    val img474 = imagesObj.optJSONObject("474x")
+                    origImageUrl = orig?.optString("url")
+                        ?: img736?.optString("url")
+                        ?: img474?.optString("url")
+                        ?: ""
+                }
+
+                if (mediaUrl.isEmpty()) {
+                    mediaUrl = origImageUrl
+                    mediaType = "IMAGE"
+                }
+
+                if (mediaUrl.isNotEmpty()) {
+                    pinsList.add(
+                        SavedPin(
+                            pinId = pinId,
+                            pinterestAccountId = accountId,
+                            searchTerm = keyword,
+                            title = title,
+                            description = description,
+                            mediaUrl = mediaUrl,
+                            mediaType = mediaType,
+                            isPosted = false,
+                            postedAt = null,
+                            rawJson = item.toString()
+                        )
+                    )
+                }
+            }
+
+            return SearchResult(pinsList, nextBookmark, true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse Pinterest search response", e)
+            return SearchResult(emptyList(), null, false, e.message)
+        }
+    }
+
+    private fun extractCsrfFromCookies(cookies: String): String {
+        val parts = cookies.split(";")
+        for (part in parts) {
+            val trimmed = part.trim()
+            if (trimmed.startsWith("csrftoken=")) {
+                return trimmed.substringAfter("csrftoken=")
+            }
+        }
+        return ""
+    }
+}

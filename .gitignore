@@ -1,0 +1,46 @@
+# Built application files (excluding the final release artifact)
+*.ap_
+*.aab
+
+# Java class files & dex
+*.class
+*.dex
+
+# Generated build directories
+build/
+*/build/
+bin/
+gen/
+out/
+buildOutput/
+
+# Gradle files
+.gradle/
+.kotlin/
+
+# Local configuration file (contains machine-specific Android SDK paths)
+local.properties
+
+# Android Studio / IntelliJ IDEA project files
+*.iml
+.idea/
+.idea/libraries
+.idea/caches
+.idea/modules.xml
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+
+# Captures and Native Build files
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Log Files
+*.log

@@ -50,7 +50,19 @@ class AppRepository(context: Context) {
     suspend fun savePinterestAccount(account: PinterestAccount): Long = withContext(Dispatchers.IO) {
         val id = dbHelper.insertOrUpdatePinterestAccount(account)
         notificationHelper.notifyStatusAlert(account.username, "Pinterest", "Account Saved & Active")
+        dbHelper.insertPostLog(
+            PostLog(
+                pinId = "ACCOUNT",
+                instagramAccountId = null,
+                status = "SUCCESS",
+                message = "Pinterest account '@${account.username}' saved (Auto Post: ${if (account.isAutoPostEnabled) "Enabled" else "Disabled"})"
+            )
+        )
         id
+    }
+
+    suspend fun updatePinterestAccount(account: PinterestAccount): Long = withContext(Dispatchers.IO) {
+        dbHelper.insertOrUpdatePinterestAccount(account)
     }
 
     suspend fun updatePinterestAccountSchedule(
@@ -60,10 +72,33 @@ class AppRepository(context: Context) {
         isEnabled: Boolean
     ) = withContext(Dispatchers.IO) {
         dbHelper.updatePinterestAccountSchedule(id, linkedInstaId, intervalHours, isEnabled)
+        val acc = dbHelper.getPinterestAccountById(id)
+        if (acc != null) {
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "SCHEDULE",
+                    instagramAccountId = linkedInstaId,
+                    status = "INFO",
+                    message = "Updated schedule for '@${acc.username}': Interval ${intervalHours}h, Auto Post ${if (isEnabled) "ON" else "OFF"}"
+                )
+            )
+        }
     }
 
     suspend fun deletePinterestAccount(id: Long): Boolean = withContext(Dispatchers.IO) {
-        dbHelper.deletePinterestAccount(id) > 0
+        val acc = dbHelper.getPinterestAccountById(id)
+        val success = dbHelper.deletePinterestAccount(id) > 0
+        if (success && acc != null) {
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "ACCOUNT",
+                    instagramAccountId = null,
+                    status = "INFO",
+                    message = "Removed Pinterest account '@${acc.username}'"
+                )
+            )
+        }
+        success
     }
 
     suspend fun checkPinterestAccountStatus(account: PinterestAccount): Pair<Boolean, String> =
@@ -72,6 +107,14 @@ class AppRepository(context: Context) {
             val newStatus = if (res.first) "ACTIVE" else "EXPIRED"
             dbHelper.updatePinterestAccountStatus(account.id, newStatus)
             notificationHelper.notifyStatusAlert(account.username, "Pinterest", res.second)
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "STATUS",
+                    instagramAccountId = null,
+                    status = if (res.first) "SUCCESS" else "FAILED",
+                    message = "Checked Pinterest status for '@${account.username}': ${res.second}"
+                )
+            )
             res
         }
 
@@ -87,11 +130,31 @@ class AppRepository(context: Context) {
     suspend fun saveInstagramAccount(account: InstagramAccount): Long = withContext(Dispatchers.IO) {
         val id = dbHelper.insertOrUpdateInstagramAccount(account)
         notificationHelper.notifyStatusAlert(account.username, "Instagram", "Account Saved & Active")
+        dbHelper.insertPostLog(
+            PostLog(
+                pinId = "ACCOUNT",
+                instagramAccountId = id,
+                status = "SUCCESS",
+                message = "Instagram account '@${account.username}' session active & saved"
+            )
+        )
         id
     }
 
     suspend fun deleteInstagramAccount(id: Long): Boolean = withContext(Dispatchers.IO) {
-        dbHelper.deleteInstagramAccount(id) > 0
+        val acc = dbHelper.getInstagramAccountById(id)
+        val success = dbHelper.deleteInstagramAccount(id) > 0
+        if (success && acc != null) {
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "ACCOUNT",
+                    instagramAccountId = id,
+                    status = "INFO",
+                    message = "Removed Instagram account '@${acc.username}'"
+                )
+            )
+        }
+        success
     }
 
     suspend fun checkInstagramAccountStatus(account: InstagramAccount): Pair<Boolean, String> =
@@ -109,11 +172,31 @@ class AppRepository(context: Context) {
     }
 
     suspend fun addKeyword(keyword: String): Long = withContext(Dispatchers.IO) {
-        dbHelper.addSearchKeyword(keyword)
+        val id = dbHelper.addSearchKeyword(keyword)
+        if (id != -1L) {
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "KEYWORD",
+                    status = "INFO",
+                    message = "Added search keyword '$keyword'"
+                )
+            )
+        }
+        id
     }
 
     suspend fun deleteKeyword(id: Long): Boolean = withContext(Dispatchers.IO) {
-        dbHelper.deleteSearchKeyword(id) > 0
+        val deleted = dbHelper.deleteSearchKeyword(id) > 0
+        if (deleted) {
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "KEYWORD",
+                    status = "INFO",
+                    message = "Removed search keyword (ID: $id)"
+                )
+            )
+        }
+        deleted
     }
 
     suspend fun getRandomKeyword(): String = withContext(Dispatchers.IO) {
@@ -135,12 +218,38 @@ class AppRepository(context: Context) {
     }
 
     suspend fun deleteSavedPin(pinId: String): Boolean = withContext(Dispatchers.IO) {
-        dbHelper.deleteSavedPin(pinId) > 0
+        val deleted = dbHelper.deleteSavedPin(pinId) > 0
+        if (deleted) {
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = pinId,
+                    status = "INFO",
+                    message = "Deleted saved pin $pinId"
+                )
+            )
+        }
+        deleted
     }
 
     // --- LOGS ---
     suspend fun getRecentLogs(): List<PostLog> = withContext(Dispatchers.IO) {
         dbHelper.getRecentPostLogs(50)
+    }
+
+    suspend fun insertActivityLog(
+        tag: String,
+        message: String,
+        status: String = "INFO",
+        postUrl: String? = null
+    ) = withContext(Dispatchers.IO) {
+        dbHelper.insertPostLog(
+            PostLog(
+                pinId = tag,
+                status = status,
+                message = message,
+                postUrl = postUrl
+            )
+        )
     }
 
     /**
@@ -155,8 +264,16 @@ class AppRepository(context: Context) {
             val keyword = getRandomKeyword()
             Log.d(TAG, "Executing Pinterest Search for account '${account.username}' with keyword: '$keyword'")
 
-            // Push notification: Search started
+            // Push notification & activity log: Search started
             notificationHelper.notifySearchStarted(account.username, keyword)
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "SEARCH",
+                    instagramAccountId = account.linkedInstagramAccountId,
+                    status = "INFO",
+                    message = "Started Pinterest search with keyword '$keyword' for @${account.username}"
+                )
+            )
 
             // Initial Search (PinteresetSearch.txt)
             val initialResult = pinterestClient.searchInitial(account, keyword)
@@ -185,15 +302,130 @@ class AppRepository(context: Context) {
             val nextRun = System.currentTimeMillis() + (account.scheduleIntervalHours * 3600 * 1000L)
             dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), statusMsg, nextRun)
 
-            // Push notification: Search completed
+            // Push notification & activity log: Search completed
             notificationHelper.notifySearchCompleted(account.username, keyword, totalSaved)
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "SEARCH",
+                    instagramAccountId = account.linkedInstagramAccountId,
+                    status = if (totalSaved > 0) "SUCCESS" else "INFO",
+                    message = "Completed Pinterest search: saved $totalSaved pins for '$keyword'"
+                )
+            )
 
             Pair(totalSaved, statusMsg)
         }
 
     /**
+     * Requirement 3 & 5: Publishes a single pin to Instagram.
+     * Can be invoked manually from Pin Card ('Publish Now') or from automation loops.
+     */
+    suspend fun postSinglePin(
+        pin: SavedPin,
+        targetInstagramAccountId: Long? = null
+    ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val instaAccountId = targetInstagramAccountId ?: run {
+            val pinAccount = dbHelper.getPinterestAccountById(pin.pinterestAccountId)
+            pinAccount?.linkedInstagramAccountId ?: dbHelper.getAllInstagramAccounts().firstOrNull()?.id
+        }
+
+        if (instaAccountId == null) {
+            val err = "No Instagram account linked to post Pin ${pin.pinId}"
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = pin.pinId,
+                    instagramAccountId = null,
+                    status = "FAILED",
+                    message = err
+                )
+            )
+            return@withContext Pair(false, err)
+        }
+
+        val instaAccount = dbHelper.getInstagramAccountById(instaAccountId)
+        if (instaAccount == null) {
+            val err = "Target Instagram account not found in database"
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = pin.pinId,
+                    instagramAccountId = instaAccountId,
+                    status = "FAILED",
+                    message = err
+                )
+            )
+            return@withContext Pair(false, err)
+        }
+
+        val rawCaption = if (pin.title.isNotBlank()) pin.title else pin.description.ifEmpty { pin.searchTerm }
+        val caption = InstagramCaptionUtils.cleanAndFormatCaption(rawCaption)
+        Log.d(TAG, "Posting pin ${pin.pinId} to @${instaAccount.username} with caption: '$caption'")
+
+        // Push notification & activity log: Post started
+        notificationHelper.notifyPostStarted(pin.pinId, instaAccount.username)
+        dbHelper.insertPostLog(
+            PostLog(
+                pinId = pin.pinId,
+                instagramAccountId = instaAccountId,
+                status = "INFO",
+                message = "Started uploading Pin ${pin.pinId} to @${instaAccount.username}"
+            )
+        )
+
+        val imageUrl = pin.getEffectiveImageUrl()
+        if (imageUrl.isBlank()) {
+            val err = "No valid image format found for Pin ${pin.pinId} (media: ${pin.mediaType})"
+            dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
+            notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, err)
+            return@withContext Pair(false, err)
+        }
+
+        val mediaBytes = instagramClient.downloadMedia(imageUrl)
+        if (mediaBytes == null || mediaBytes.isEmpty()) {
+            val err = "Failed downloading pin media from $imageUrl"
+            dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
+            notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, "Image download failed")
+            return@withContext Pair(false, err)
+        }
+
+        val postResult = instagramClient.postPhoto(instaAccount, mediaBytes, caption)
+        if (postResult.success) {
+            val postUrl = postResult.postUrl
+            dbHelper.markPinAsPosted(pin.pinId, instaAccountId, postUrl = postUrl)
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = pin.pinId,
+                    instagramAccountId = instaAccountId,
+                    status = "SUCCESS",
+                    message = postResult.message,
+                    postUrl = postUrl
+                )
+            )
+
+            // Push notification: Post succeeded with post URL
+            notificationHelper.notifyPostSuccess(
+                pinId = pin.pinId,
+                igUsername = instaAccount.username,
+                caption = caption,
+                postUrl = postUrl,
+                instagramAccountId = instaAccountId
+            )
+            Pair(true, postResult.message)
+        } else {
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = pin.pinId,
+                    instagramAccountId = instaAccountId,
+                    status = "FAILED",
+                    message = postResult.message
+                )
+            )
+            notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, postResult.message)
+            Pair(false, postResult.message)
+        }
+    }
+
+    /**
      * Requirement 5: Download each pin and post on Instagram with title as caption
-     * (or search text as fallback if title is empty).
      */
     suspend fun executeInstagramPost(
         pinterestAccountId: Long,
@@ -205,9 +437,6 @@ class AppRepository(context: Context) {
         val instaAccountId = pinAccount.linkedInstagramAccountId
             ?: return@withContext Pair(0, "No Instagram account linked to Pinterest account '${pinAccount.username}'")
 
-        val instaAccount = dbHelper.getInstagramAccountById(instaAccountId)
-            ?: return@withContext Pair(0, "Linked Instagram account not found in database")
-
         val unpostedPins = dbHelper.getUnpostedPins(limit)
         if (unpostedPins.isEmpty()) {
             return@withContext Pair(0, "No pending pins to post")
@@ -217,72 +446,80 @@ class AppRepository(context: Context) {
         val summaryMessages = mutableListOf<String>()
 
         for (pin in unpostedPins) {
-            val rawCaption = if (pin.title.isNotBlank()) pin.title else pin.description.ifEmpty { pin.searchTerm }
-            val caption = InstagramCaptionUtils.cleanAndFormatCaption(rawCaption)
-            Log.d(TAG, "Posting pin ${pin.pinId} to Instagram (@${instaAccount.username}) with caption: '$caption' (raw: '$rawCaption')")
-
-            // Push notification: Post started
-            notificationHelper.notifyPostStarted(pin.pinId, instaAccount.username)
-
-            val imageUrl = pin.getEffectiveImageUrl()
-            if (imageUrl.isBlank()) {
-                val err = "No valid image format found for Pin ${pin.pinId} (raw media was ${pin.mediaType})"
-                dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
-                summaryMessages.add("Pin ${pin.pinId}: No valid image")
-                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, err)
-                continue
-            }
-
-            val mediaBytes = instagramClient.downloadMedia(imageUrl)
-            if (mediaBytes == null || mediaBytes.isEmpty()) {
-                val err = "Failed downloading pin image from $imageUrl"
-                dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = err))
-                summaryMessages.add("Pin ${pin.pinId}: Download failed")
-                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, "Image download failed")
-                continue
-            }
-
-            val postResult = instagramClient.postPhoto(instaAccount, mediaBytes, caption)
-            if (postResult.success) {
-                val postUrl = postResult.postUrl
-                dbHelper.markPinAsPosted(pin.pinId, instaAccountId, postUrl = postUrl)
-                dbHelper.insertPostLog(
-                    PostLog(
-                        pinId = pin.pinId,
-                        instagramAccountId = instaAccountId,
-                        status = "SUCCESS",
-                        message = postResult.message,
-                        postUrl = postUrl
-                    )
-                )
+            val res = postSinglePin(pin, instaAccountId)
+            if (res.first) {
                 successCount++
                 summaryMessages.add("Pin ${pin.pinId}: Posted successfully")
-
-                // Push notification: Post succeeded with reel/post URL and account ID
-                notificationHelper.notifyPostSuccess(
-                    pinId = pin.pinId,
-                    igUsername = instaAccount.username,
-                    caption = caption,
-                    postUrl = postUrl,
-                    instagramAccountId = instaAccountId
-                )
             } else {
-                dbHelper.insertPostLog(
-                    PostLog(
-                        pinId = pin.pinId,
-                        instagramAccountId = instaAccountId,
-                        status = "FAILED",
-                        message = postResult.message
-                    )
-                )
-                summaryMessages.add("Pin ${pin.pinId}: ${postResult.message}")
-
-                // Push notification: Post failed
-                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, postResult.message)
+                summaryMessages.add("Pin ${pin.pinId}: ${res.second}")
             }
         }
 
         Pair(successCount, summaryMessages.joinToString("; "))
+    }
+
+    /**
+     * Requirement 2:
+     * When auto post scheduled time triggers or 'Run Now' is clicked:
+     * Checks if there are pending pins available to publish.
+     * - If available: publishes the existing item first (does NOT search Pinterest).
+     * - If no items available: searches Pinterest using keyword, saves results, and publishes the first one.
+     */
+    suspend fun executePublishOrSearchFlow(pinterestAccountId: Long): Pair<Int, String> = withContext(Dispatchers.IO) {
+        val account = dbHelper.getPinterestAccountById(pinterestAccountId)
+            ?: return@withContext Pair(0, "Pinterest account not found")
+
+        val unpostedPins = dbHelper.getUnpostedPins(1)
+
+        if (unpostedPins.isNotEmpty()) {
+            val pendingPin = unpostedPins.first()
+            val totalPending = dbHelper.getUnpostedPins(50).size
+            Log.d(TAG, "Pending pin available ($totalPending total). Publishing pending pin first: ${pendingPin.pinId}")
+
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = pendingPin.pinId,
+                    instagramAccountId = account.linkedInstagramAccountId,
+                    status = "INFO",
+                    message = "Publishing available saved pin '${InstagramCaptionUtils.safeTruncate(pendingPin.title.ifEmpty { pendingPin.searchTerm }, 40)}' ($totalPending remaining)"
+                )
+            )
+
+            val postRes = postSinglePin(pendingPin, account.linkedInstagramAccountId)
+            val nextRun = System.currentTimeMillis() + (account.scheduleIntervalHours * 3600 * 1000L)
+            val statusMsg = if (postRes.first) {
+                "Published available pin ${pendingPin.pinId} (${totalPending - 1} remaining)"
+            } else {
+                "Failed publishing pin ${pendingPin.pinId}: ${postRes.second}"
+            }
+            dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), statusMsg, nextRun)
+            Pair(if (postRes.first) 1 else 0, statusMsg)
+        } else {
+            // No items available -> start Pinterest search!
+            Log.d(TAG, "No pending pins available. Starting Pinterest search for account '@${account.username}'")
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "SEARCH",
+                    instagramAccountId = account.linkedInstagramAccountId,
+                    status = "INFO",
+                    message = "No pending pins found. Searching Pinterest for account '@${account.username}'..."
+                )
+            )
+
+            val searchRes = executePinterestSearch(account.id)
+            if (searchRes.first > 0 && account.linkedInstagramAccountId != null) {
+                val newlyFound = dbHelper.getUnpostedPins(1)
+                if (newlyFound.isNotEmpty()) {
+                    val postRes = postSinglePin(newlyFound.first(), account.linkedInstagramAccountId)
+                    val nextRun = System.currentTimeMillis() + (account.scheduleIntervalHours * 3600 * 1000L)
+                    val statusMsg = "Searched and saved ${searchRes.first} pins. Published pin ${newlyFound.first().pinId}."
+                    dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), statusMsg, nextRun)
+                    return@withContext Pair(1, statusMsg)
+                }
+            }
+
+            searchRes
+        }
     }
 
     // --- ACCOUNT IMPORT & EXPORT ---
@@ -331,7 +568,15 @@ class AppRepository(context: Context) {
             put("instagramAccounts", instaArray)
         }
 
-        root.toString(2)
+        val jsonOutput = root.toString(2)
+        dbHelper.insertPostLog(
+            PostLog(
+                pinId = "BACKUP",
+                status = "INFO",
+                message = "Exported backup: ${pinterestAccounts.size} Pinterest and ${instagramAccounts.size} Instagram account(s)"
+            )
+        )
+        jsonOutput
     }
 
     suspend fun importAccountsJson(jsonString: String): ImportResult = withContext(Dispatchers.IO) {
@@ -379,13 +624,21 @@ class AppRepository(context: Context) {
                         cookies = cookies,
                         csrfToken = obj.optString("csrfToken", ""),
                         status = obj.optString("status", "ACTIVE"),
-                        scheduleIntervalHours = obj.optInt("scheduleIntervalHours", 24),
-                        isAutoPostEnabled = obj.optBoolean("isAutoPostEnabled", false)
+                        scheduleIntervalHours = obj.optInt("scheduleIntervalHours", 1),
+                        isAutoPostEnabled = obj.optBoolean("isAutoPostEnabled", true)
                     )
                     dbHelper.insertOrUpdatePinterestAccount(account)
                     pinCount++
                 }
             }
+
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "BACKUP",
+                    status = "SUCCESS",
+                    message = "Imported $pinCount Pinterest and $instaCount Instagram account(s) successfully"
+                )
+            )
 
             ImportResult(
                 pinterestImported = pinCount,
@@ -394,6 +647,13 @@ class AppRepository(context: Context) {
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to import accounts JSON", e)
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "BACKUP",
+                    status = "FAILED",
+                    message = "Failed to import accounts: ${e.message}"
+                )
+            )
             ImportResult(
                 pinterestImported = 0,
                 instagramImported = 0,

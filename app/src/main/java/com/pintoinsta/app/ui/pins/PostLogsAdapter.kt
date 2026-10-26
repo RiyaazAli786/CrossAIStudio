@@ -49,14 +49,28 @@ class PostLogsAdapter(
 
             binding.tvLogMessage.text = log.message
             val timeStr = SimpleDateFormat("MMM dd, hh:mm:ss a", Locale.getDefault()).format(Date(log.timestamp))
-            binding.tvLogTime.text = "$timeStr • Pin ID: ${log.pinId}"
-
-            if (log.status == "SUCCESS") {
-                binding.ivLogIcon.setImageResource(R.drawable.ic_check_circle)
-                binding.ivLogIcon.setColorFilter(ContextCompat.getColor(context, R.color.status_green))
+            val nonPinTags = setOf("SYSTEM", "SEARCH", "ACCOUNT", "BACKUP", "SCHEDULE", "STATUS", "KEYWORD", "THEME", "INFO")
+            binding.tvLogTime.text = if (log.pinId.isNotBlank() && !nonPinTags.contains(log.pinId)) {
+                "$timeStr • Pin: ${log.pinId}"
+            } else if (log.pinId.isNotBlank() && log.pinId != "INFO" && log.pinId != "SYSTEM") {
+                "$timeStr • ${log.pinId}"
             } else {
-                binding.ivLogIcon.setImageResource(R.drawable.ic_error)
-                binding.ivLogIcon.setColorFilter(ContextCompat.getColor(context, R.color.status_red))
+                timeStr
+            }
+
+            when (log.status) {
+                "SUCCESS" -> {
+                    binding.ivLogIcon.setImageResource(R.drawable.ic_check_circle)
+                    binding.ivLogIcon.setColorFilter(ContextCompat.getColor(context, R.color.status_green))
+                }
+                "FAILED" -> {
+                    binding.ivLogIcon.setImageResource(R.drawable.ic_error)
+                    binding.ivLogIcon.setColorFilter(ContextCompat.getColor(context, R.color.status_red))
+                }
+                else -> { // INFO, SEARCH, ACCOUNT, BACKUP
+                    binding.ivLogIcon.setImageResource(R.drawable.ic_info)
+                    binding.ivLogIcon.setColorFilter(ContextCompat.getColor(context, R.color.status_blue))
+                }
             }
 
             val effectiveUrl = log.getEffectivePostUrl()

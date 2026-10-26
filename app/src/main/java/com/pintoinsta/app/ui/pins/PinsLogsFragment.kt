@@ -68,6 +68,9 @@ class PinsLogsFragment : Fragment() {
             onOpenReelClick = { pin ->
                 val targetUrl = pin.postUrl?.takeIf { it.isNotBlank() } ?: "https://www.instagram.com/"
                 openReel(targetUrl, pin.instagramAccountId)
+            },
+            onPublishPinClick = { pin, button ->
+                publishSpecificPin(pin, button)
             }
         )
         binding.rvSavedPins.layoutManager = LinearLayoutManager(requireContext())
@@ -91,6 +94,41 @@ class PinsLogsFragment : Fragment() {
             }
         }
         startActivity(intent)
+    }
+
+    private fun publishSpecificPin(
+        pin: SavedPin,
+        button: com.google.android.material.button.MaterialButton
+    ) {
+        button.isEnabled = false
+        button.text = "Publishing..."
+
+        Toast.makeText(
+            requireContext(),
+            "Publishing Pin ${pin.pinId} to Instagram...",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        lifecycleScope.launch {
+            val result = repository.postSinglePin(pin)
+            if (result.first) {
+                Toast.makeText(
+                    requireContext(),
+                    "Pin ${pin.pinId} published successfully!",
+                    Toast.LENGTH_LONG
+                ).show()
+                loadData()
+            } else {
+                button.isEnabled = true
+                button.text = "Publish Now"
+                Toast.makeText(
+                    requireContext(),
+                    "Failed to publish: ${result.second}",
+                    Toast.LENGTH_LONG
+                ).show()
+                loadData()
+            }
+        }
     }
 
     private fun confirmDeletePin(pin: SavedPin) {

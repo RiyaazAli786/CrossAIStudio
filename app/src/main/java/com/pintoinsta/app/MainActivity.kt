@@ -22,6 +22,8 @@ import com.pintoinsta.app.ui.instagram.InstagramFragment
 import com.pintoinsta.app.ui.pins.PinsLogsFragment
 import com.pintoinsta.app.ui.pinterest.PinterestFragment
 import com.pintoinsta.app.ui.settings.SettingsFragment
+import com.pintoinsta.app.util.ThemeManager
+import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -38,9 +40,13 @@ class MainActivity : AppCompatActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        ThemeManager.applyTheme(this)
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        val isLight = ThemeManager.getSavedTheme(this) == ThemeManager.THEME_LIGHT
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = isLight
 
         // Prevent top status bar and camera punch-hole/notch from overlapping content
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { view, insets ->

@@ -16,8 +16,10 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.pintoinsta.app.R
 import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.databinding.FragmentSettingsBinding
+import com.pintoinsta.app.util.ThemeManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -82,6 +84,30 @@ class SettingsFragment : Fragment() {
     }
 
     private fun setupListeners() {
+        // Theme capsule toggle setup
+        val currentTheme = ThemeManager.getSavedTheme(requireContext())
+        if (currentTheme == ThemeManager.THEME_DARK) {
+            binding.toggleThemeGroup.check(R.id.btnThemeDark)
+        } else {
+            binding.toggleThemeGroup.check(R.id.btnThemeLight)
+        }
+
+        binding.toggleThemeGroup.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (isChecked) {
+                val newTheme = if (checkedId == R.id.btnThemeDark) {
+                    ThemeManager.THEME_DARK
+                } else {
+                    ThemeManager.THEME_LIGHT
+                }
+                if (newTheme != ThemeManager.getSavedTheme(requireContext())) {
+                    lifecycleScope.launch {
+                        repository.insertActivityLog("THEME", "App theme switched to $newTheme mode", "INFO")
+                    }
+                    ThemeManager.setTheme(requireContext(), newTheme)
+                }
+            }
+        }
+
         // Account Export button
         binding.btnExportAccounts.setOnClickListener {
             showExportOptionsDialog()

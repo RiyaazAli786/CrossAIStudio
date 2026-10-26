@@ -99,6 +99,26 @@
                 android:textColor="@color/text_muted"
                 android:textSize="11sp"
                 tools:text="Search: funny cartoon video" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnPublishPin"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginTop="6dp"
+                android:backgroundTint="@color/pinterest_red"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:paddingHorizontal="12dp"
+                android:text="Publish Now"
+                android:textColor="@color/on_primary"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                app:cornerRadius="6dp"
+                app:icon="@drawable/ic_file_upload"
+                app:iconGravity="textStart"
+                app:iconSize="14dp"
+                app:iconTint="@color/on_primary" />
         </LinearLayout>
 
         <ImageButton

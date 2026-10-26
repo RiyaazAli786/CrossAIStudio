@@ -15,7 +15,8 @@ class SavedPinsAdapter(
     private var pins: List<SavedPin>,
     var onPlayVideoClick: ((SavedPin) -> Unit)? = null,
     var onDeletePinClick: ((SavedPin) -> Unit)? = null,
-    var onOpenReelClick: ((SavedPin) -> Unit)? = null
+    var onOpenReelClick: ((SavedPin) -> Unit)? = null,
+    var onPublishPinClick: ((SavedPin, com.google.android.material.button.MaterialButton) -> Unit)? = null
 ) : RecyclerView.Adapter<SavedPinsAdapter.ViewHolder>() {
 
     fun updateData(newPins: List<SavedPin>) {
@@ -51,13 +52,20 @@ class SavedPinsAdapter(
             binding.tvSearchKeyword.text = "Keyword: ${pin.searchTerm} • ${pin.mediaType}"
 
             if (pin.isPosted) {
-                binding.tvPinStatus.text = "Posted"
+                binding.tvPinStatus.text = "Published"
                 binding.tvPinStatus.setBackgroundResource(R.drawable.bg_badge_active)
                 binding.tvPinStatus.setTextColor(ContextCompat.getColor(context, R.color.status_green))
+                binding.btnPublishPin.visibility = View.GONE
             } else {
                 binding.tvPinStatus.text = "Pending"
                 binding.tvPinStatus.setBackgroundResource(R.drawable.bg_badge_checking)
                 binding.tvPinStatus.setTextColor(ContextCompat.getColor(context, R.color.status_orange))
+                binding.btnPublishPin.visibility = View.VISIBLE
+                binding.btnPublishPin.isEnabled = true
+                binding.btnPublishPin.text = "Publish Now"
+                binding.btnPublishPin.setOnClickListener {
+                    onPublishPinClick?.invoke(pin, binding.btnPublishPin)
+                }
             }
 
             // Use getEffectiveImageUrl() to display high-res preview thumbnail even for video pins

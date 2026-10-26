@@ -9,8 +9,8 @@ data class PinterestAccount(
     val csrfToken: String = "",
     var status: String = "ACTIVE", // ACTIVE, EXPIRED, CHECKING, UNKNOWN
     var linkedInstagramAccountId: Long? = null,
-    var scheduleIntervalHours: Int = 24, // 1, 2, 4, 6, 12, 24
-    var isAutoPostEnabled: Boolean = false,
+    var scheduleIntervalHours: Int = 1, // 1, 2, 4, 6, 12, 24
+    var isAutoPostEnabled: Boolean = true,
     var nextRunTime: Long = 0,
     var lastRunTime: Long = 0,
     var lastRunStatus: String = "Idle",

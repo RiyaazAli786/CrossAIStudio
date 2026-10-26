@@ -2,11 +2,15 @@ package com.pintoinsta.app
 
 import android.app.Application
 import com.pintoinsta.app.service.CrossAIPostingService
+import com.pintoinsta.app.util.ThemeManager
 import com.pintoinsta.app.worker.ScheduleManager
 
 class PinToInstaApp : Application() {
     override fun onCreate() {
         super.onCreate()
+
+        // Apply Light theme by default (or user selected theme)
+        ThemeManager.applyTheme(this)
 
         // Start persistent background service (runs even when closed from recents)
         CrossAIPostingService.startService(this)

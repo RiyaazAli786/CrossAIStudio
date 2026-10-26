@@ -116,11 +116,7 @@ class CrossAIPostingService : Service() {
                     for (account in accounts) {
                         if (account.isAutoPostEnabled && account.nextRunTime in 1..now) {
                             Log.d(TAG, "Scheduled run due for account '${account.username}'")
-                            repository.executePinterestSearch(account.id)
-
-                            if (account.linkedInstagramAccountId != null) {
-                                repository.executeInstagramPost(account.id, limit = 1)
-                            }
+                            repository.executePublishOrSearchFlow(account.id)
                         }
                     }
                 } catch (e: Exception) {

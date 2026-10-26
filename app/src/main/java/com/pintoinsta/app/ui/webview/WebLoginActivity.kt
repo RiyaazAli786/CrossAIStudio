@@ -11,6 +11,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.util.Log
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -25,6 +26,7 @@ import com.pintoinsta.app.data.model.InstagramAccount
 import com.pintoinsta.app.data.model.PinterestAccount
 import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.databinding.ActivityWebLoginBinding
+import com.pintoinsta.app.worker.ScheduleManager
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -661,6 +663,9 @@ class WebLoginActivity : AppCompatActivity() {
     ) {
         isSessionCaptured = true
         lifecycleScope.launch(Dispatchers.IO) {
+            val allIg = repository.getAllInstagramAccounts()
+            val linkedIgId = allIg.firstOrNull()?.id
+
             val account = PinterestAccount(
                 username = username,
                 displayName = displayName.ifEmpty { username },
@@ -668,15 +673,30 @@ class WebLoginActivity : AppCompatActivity() {
                 cookies = cookies,
                 csrfToken = csrfToken,
                 status = "ACTIVE",
-                lastCheckedTime = System.currentTimeMillis()
+                lastCheckedTime = System.currentTimeMillis(),
+                linkedInstagramAccountId = linkedIgId,
+                scheduleIntervalHours = 1,
+                isAutoPostEnabled = true,
+                nextRunTime = System.currentTimeMillis() + (1 * 3600 * 1000L)
             )
 
-            repository.savePinterestAccount(account)
+            val insertedId = repository.savePinterestAccount(account)
+            val savedAccount = account.copy(id = insertedId)
+            ScheduleManager.updateAccountSchedule(applicationContext, savedAccount)
+
+            // Requirement 2: Start publish or search flow immediately upon adding account with auto-post enabled
+            launch(Dispatchers.IO) {
+                try {
+                    repository.executePublishOrSearchFlow(insertedId)
+                } catch (e: Exception) {
+                    Log.e("WebLoginActivity", "Initial auto post execution failed", e)
+                }
+            }
 
             withContext(Dispatchers.Main) {
                 Toast.makeText(
                     this@WebLoginActivity,
-                    "Pinterest account '@$username' successfully added!",
+                    "Pinterest account '@$username' successfully added with Auto Post enabled!",
                     Toast.LENGTH_LONG
                 ).show()
                 finish()
@@ -705,7 +725,17 @@ class WebLoginActivity : AppCompatActivity() {
                 lastCheckedTime = System.currentTimeMillis()
             )
 
-            repository.saveInstagramAccount(account)
+            val insertedId = repository.saveInstagramAccount(account)
+
+            // Auto-link any Pinterest accounts that don't have a linked Instagram account yet
+            val pinterestAccounts = repository.getAllPinterestAccounts()
+            for (pinAccount in pinterestAccounts) {
+                if (pinAccount.linkedInstagramAccountId == null) {
+                    val updated = pinAccount.copy(linkedInstagramAccountId = insertedId)
+                    repository.updatePinterestAccount(updated)
+                    ScheduleManager.updateAccountSchedule(applicationContext, updated)
+                }
+            }
 
             withContext(Dispatchers.Main) {
                 Toast.makeText(

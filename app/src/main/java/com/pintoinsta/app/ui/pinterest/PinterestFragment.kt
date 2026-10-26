@@ -112,20 +112,13 @@ class PinterestFragment : Fragment() {
     private fun runNow(account: PinterestAccount) {
         Toast.makeText(
             requireContext(),
-            "Starting search & post for '${account.username}'...",
+            "Starting execution for '${account.username}'...",
             Toast.LENGTH_SHORT
         ).show()
 
         lifecycleScope.launch {
-            // Run search
-            val searchRes = repository.executePinterestSearch(account.id)
-            Toast.makeText(requireContext(), searchRes.second, Toast.LENGTH_LONG).show()
-
-            // Run post if linked to Instagram
-            if (account.linkedInstagramAccountId != null) {
-                val postRes = repository.executeInstagramPost(account.id, limit = 1)
-                Toast.makeText(requireContext(), postRes.second, Toast.LENGTH_LONG).show()
-            }
+            val res = repository.executePublishOrSearchFlow(account.id)
+            Toast.makeText(requireContext(), res.second, Toast.LENGTH_LONG).show()
             loadAccounts()
         }
     }
@@ -147,6 +140,11 @@ class PinterestFragment : Fragment() {
                 "Schedule updated for '${account.username}'",
                 Toast.LENGTH_SHORT
             ).show()
+
+            // Requirement 2: Start search/publish when auto post is enabled
+            if (isAuto) {
+                repository.executePublishOrSearchFlow(account.id)
+            }
             loadAccounts()
         }
     }

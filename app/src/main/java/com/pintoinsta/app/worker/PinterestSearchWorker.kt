@@ -32,16 +32,9 @@ class PinterestSearchWorker(
                 return Result.failure()
             }
 
-            Log.d(TAG, "Starting scheduled Pinterest search for account: ${account.username}")
-            val searchResult = repository.executePinterestSearch(accountId)
-            Log.d(TAG, "Search completed: ${searchResult.second}")
-
-            // If auto-post is enabled and an Instagram account is linked, post the next pin
-            if (account.isAutoPostEnabled && account.linkedInstagramAccountId != null) {
-                Log.d(TAG, "Auto-post enabled, triggering Instagram post...")
-                val postResult = repository.executeInstagramPost(accountId, limit = 1)
-                Log.d(TAG, "Instagram post result: ${postResult.second}")
-            }
+            Log.d(TAG, "Starting scheduled execution for account: ${account.username}")
+            val flowResult = repository.executePublishOrSearchFlow(accountId)
+            Log.d(TAG, "Scheduled execution completed: ${flowResult.second}")
 
             Result.success()
         } catch (e: Exception) {

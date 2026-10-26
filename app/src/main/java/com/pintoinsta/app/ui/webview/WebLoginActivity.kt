@@ -167,20 +167,100 @@ class WebLoginActivity : AppCompatActivity() {
                 }
             }
 
-            // Handle OAuth popup windows (e.g. "Continue with Google" popup) inside the webview
+            // Handle OAuth popup windows (e.g. "Continue with Google" popup) inside a dedicated popup Dialog
             override fun onCreateWindow(
                 view: WebView?,
                 isDialog: Boolean,
                 isUserGesture: Boolean,
                 resultMsg: android.os.Message?
             ): Boolean {
-                val transport = resultMsg?.obj as? WebView.WebViewTransport
+                if (resultMsg == null) return false
+
+                val context = this@WebLoginActivity
+                val popupWebView = WebView(context).apply {
+                    settings.apply {
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        databaseEnabled = true
+                        userAgentString = cleanUserAgent
+                        setSupportMultipleWindows(true)
+                        javaScriptCanOpenWindowsAutomatically = true
+                    }
+                }
+
+                val cookieManager = CookieManager.getInstance()
+                cookieManager.setAcceptCookie(true)
+                cookieManager.setAcceptThirdPartyCookies(popupWebView, true)
+
+                val popupDialog = android.app.Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen).apply {
+                    setContentView(popupWebView)
+                    setOnCancelListener {
+                        try {
+                            popupWebView.destroy()
+                        } catch (e: Exception) {
+                            // Ignore
+                        }
+                    }
+                }
+
+                popupWebView.webChromeClient = object : WebChromeClient() {
+                    override fun onCloseWindow(window: WebView?) {
+                        try {
+                            popupDialog.dismiss()
+                            window?.destroy()
+                        } catch (e: Exception) {
+                            // Ignore
+                        }
+                    }
+                }
+
+                popupWebView.webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                        val url = request?.url?.toString() ?: ""
+                        if (url.contains("pinterest.com") || url.contains("instagram.com")) {
+                            try {
+                                popupDialog.dismiss()
+                                popupWebView.destroy()
+                            } catch (e: Exception) {
+                                // Ignore
+                            }
+                            cookieManager.flush()
+                            binding.webView.loadUrl(url)
+                            return true
+                        }
+                        return false
+                    }
+
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        if (url != null && (url.contains("pinterest.com") || url.contains("instagram.com"))) {
+                            val cookies = getPlatformCookies()
+                            if (isUserLoggedIn(url, cookies)) {
+                                try {
+                                    popupDialog.dismiss()
+                                    popupWebView.destroy()
+                                } catch (e: Exception) {
+                                    // Ignore
+                                }
+                                cookieManager.flush()
+                                checkAndCaptureSession(force = false)
+                            }
+                        }
+                    }
+                }
+
+                val transport = resultMsg.obj as? WebView.WebViewTransport
                 if (transport != null) {
-                    transport.webView = binding.webView
+                    transport.webView = popupWebView
                     resultMsg.sendToTarget()
+                    try {
+                        popupDialog.show()
+                    } catch (e: Exception) {
+                        return false
+                    }
                     return true
                 }
-                return super.onCreateWindow(view, isDialog, isUserGesture, resultMsg)
+                return false
             }
         }
 

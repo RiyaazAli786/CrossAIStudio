@@ -14,6 +14,8 @@ import com.pintoinsta.app.notification.NotificationHelper
 import com.pintoinsta.app.util.InstagramCaptionUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.random.Random
 
 class AppRepository(context: Context) {
@@ -281,5 +283,122 @@ class AppRepository(context: Context) {
         }
 
         Pair(successCount, summaryMessages.joinToString("; "))
+    }
+
+    // --- ACCOUNT IMPORT & EXPORT ---
+    data class ImportResult(
+        val pinterestImported: Int,
+        val instagramImported: Int,
+        val message: String
+    )
+
+    suspend fun exportAccountsJson(): String = withContext(Dispatchers.IO) {
+        val pinterestAccounts = dbHelper.getAllPinterestAccounts()
+        val instagramAccounts = dbHelper.getAllInstagramAccounts()
+
+        val root = JSONObject().apply {
+            put("appName", "CrossAIStudio")
+            put("version", 1)
+            put("exportedAt", System.currentTimeMillis())
+
+            val pinArray = JSONArray()
+            for (acc in pinterestAccounts) {
+                pinArray.put(JSONObject().apply {
+                    put("username", acc.username)
+                    put("displayName", acc.displayName)
+                    put("profilePicUrl", acc.profilePicUrl)
+                    put("cookies", acc.cookies)
+                    put("csrfToken", acc.csrfToken)
+                    put("status", acc.status)
+                    put("scheduleIntervalHours", acc.scheduleIntervalHours)
+                    put("isAutoPostEnabled", acc.isAutoPostEnabled)
+                })
+            }
+            put("pinterestAccounts", pinArray)
+
+            val instaArray = JSONArray()
+            for (acc in instagramAccounts) {
+                instaArray.put(JSONObject().apply {
+                    put("username", acc.username)
+                    put("displayName", acc.displayName)
+                    put("profilePicUrl", acc.profilePicUrl)
+                    put("cookies", acc.cookies)
+                    put("csrfToken", acc.csrfToken)
+                    put("dsUserId", acc.dsUserId)
+                    put("status", acc.status)
+                })
+            }
+            put("instagramAccounts", instaArray)
+        }
+
+        root.toString(2)
+    }
+
+    suspend fun importAccountsJson(jsonString: String): ImportResult = withContext(Dispatchers.IO) {
+        var pinCount = 0
+        var instaCount = 0
+        try {
+            val root = JSONObject(jsonString)
+
+            // Import Instagram Accounts first
+            val instaArray = root.optJSONArray("instagramAccounts")
+            if (instaArray != null) {
+                for (i in 0 until instaArray.length()) {
+                    val obj = instaArray.optJSONObject(i) ?: continue
+                    val username = obj.optString("username").trim()
+                    val cookies = obj.optString("cookies").trim()
+                    if (username.isBlank() || cookies.isBlank()) continue
+
+                    val account = InstagramAccount(
+                        username = username,
+                        displayName = obj.optString("displayName", username),
+                        profilePicUrl = obj.optString("profilePicUrl", ""),
+                        cookies = cookies,
+                        csrfToken = obj.optString("csrfToken", ""),
+                        dsUserId = obj.optString("dsUserId", ""),
+                        status = obj.optString("status", "ACTIVE")
+                    )
+                    dbHelper.insertOrUpdateInstagramAccount(account)
+                    instaCount++
+                }
+            }
+
+            // Import Pinterest Accounts
+            val pinArray = root.optJSONArray("pinterestAccounts")
+            if (pinArray != null) {
+                for (i in 0 until pinArray.length()) {
+                    val obj = pinArray.optJSONObject(i) ?: continue
+                    val username = obj.optString("username").trim()
+                    val cookies = obj.optString("cookies").trim()
+                    if (username.isBlank() || cookies.isBlank()) continue
+
+                    val account = PinterestAccount(
+                        username = username,
+                        displayName = obj.optString("displayName", username),
+                        profilePicUrl = obj.optString("profilePicUrl", ""),
+                        cookies = cookies,
+                        csrfToken = obj.optString("csrfToken", ""),
+                        status = obj.optString("status", "ACTIVE"),
+                        scheduleIntervalHours = obj.optInt("scheduleIntervalHours", 24),
+                        isAutoPostEnabled = obj.optBoolean("isAutoPostEnabled", false)
+                    )
+                    dbHelper.insertOrUpdatePinterestAccount(account)
+                    pinCount++
+                }
+            }
+
+            ImportResult(
+                pinterestImported = pinCount,
+                instagramImported = instaCount,
+                message = "Imported $pinCount Pinterest and $instaCount Instagram account(s) successfully"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to import accounts JSON", e)
+            ImportResult(
+                pinterestImported = 0,
+                instagramImported = 0,
+                message = "Failed to parse JSON: ${e.message}"
+            )
+        }
     }
 }

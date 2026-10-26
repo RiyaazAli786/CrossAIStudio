@@ -1,16 +1,28 @@
 package com.pintoinsta.app.ui.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.databinding.FragmentSettingsBinding
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.InputStreamReader
 
 class SettingsFragment : Fragment() {
 
@@ -19,6 +31,20 @@ class SettingsFragment : Fragment() {
 
     private lateinit var repository: AppRepository
     private lateinit var adapter: KeywordsAdapter
+
+    private val exportFileLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+            if (uri != null) {
+                saveExportToUri(uri)
+            }
+        }
+
+    private val importFileLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                importFromUri(uri)
+            }
+        }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -40,6 +66,7 @@ class SettingsFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         loadKeywords()
+        updateAccountStats()
     }
 
     private fun setupRecyclerView() {
@@ -55,6 +82,17 @@ class SettingsFragment : Fragment() {
     }
 
     private fun setupListeners() {
+        // Account Export button
+        binding.btnExportAccounts.setOnClickListener {
+            showExportOptionsDialog()
+        }
+
+        // Account Import button
+        binding.btnImportAccounts.setOnClickListener {
+            showImportOptionsDialog()
+        }
+
+        // Add Keyword button
         binding.btnAddKeyword.setOnClickListener {
             val text = binding.etKeyword.text?.toString()?.trim() ?: ""
             if (text.isEmpty()) {
@@ -73,6 +111,204 @@ class SettingsFragment : Fragment() {
                     binding.tilKeyword.error = "Keyword already exists"
                 }
             }
+        }
+    }
+
+    private fun updateAccountStats() {
+        lifecycleScope.launch {
+            val pinAccounts = repository.getAllPinterestAccounts()
+            val instaAccounts = repository.getAllInstagramAccounts()
+            binding.tvAccountStats.text =
+                "Saved Accounts: ${pinAccounts.size} Pinterest • ${instaAccounts.size} Instagram"
+        }
+    }
+
+    private fun showExportOptionsDialog() {
+        lifecycleScope.launch {
+            val pinAccounts = repository.getAllPinterestAccounts()
+            val instaAccounts = repository.getAllInstagramAccounts()
+
+            if (pinAccounts.isEmpty() && instaAccounts.isEmpty()) {
+                Toast.makeText(
+                    requireContext(),
+                    "No logged-in accounts found to export",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
+
+            val options = arrayOf(
+                "Save as JSON File",
+                "Share via Apps (Drive, Gmail, WhatsApp...)",
+                "Copy JSON to Clipboard"
+            )
+
+            AlertDialog.Builder(requireContext())
+                .setTitle("Export All Logged-In Accounts")
+                .setItems(options) { _, which ->
+                    when (which) {
+                        0 -> {
+                            val filename = "crossai_accounts_backup_${System.currentTimeMillis()}.json"
+                            exportFileLauncher.launch(filename)
+                        }
+                        1 -> shareExportJson()
+                        2 -> copyExportToClipboard()
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    private fun saveExportToUri(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                val jsonString = repository.exportAccountsJson()
+                withContext(Dispatchers.IO) {
+                    requireContext().contentResolver.openOutputStream(uri)?.use { outputStream ->
+                        outputStream.write(jsonString.toByteArray(Charsets.UTF_8))
+                    }
+                }
+                Toast.makeText(
+                    requireContext(),
+                    "Accounts exported successfully to file!",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    requireContext(),
+                    "Failed to export accounts: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun shareExportJson() {
+        lifecycleScope.launch {
+            try {
+                val jsonString = repository.exportAccountsJson()
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/json"
+                    putExtra(Intent.EXTRA_SUBJECT, "CrossAIStudio Accounts Backup")
+                    putExtra(Intent.EXTRA_TEXT, jsonString)
+                }
+                startActivity(Intent.createChooser(shareIntent, "Share Accounts Backup"))
+            } catch (e: Exception) {
+                Toast.makeText(
+                    requireContext(),
+                    "Error generating export: ${e.message}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    private fun copyExportToClipboard() {
+        lifecycleScope.launch {
+            try {
+                val jsonString = repository.exportAccountsJson()
+                val clipboard =
+                    requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("CrossAI Accounts Backup", jsonString)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(
+                    requireContext(),
+                    "Accounts backup copied to clipboard!",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    requireContext(),
+                    "Error copying export: ${e.message}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    private fun showImportOptionsDialog() {
+        val options = arrayOf(
+            "Select JSON Backup File",
+            "Paste JSON Content"
+        )
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("Import Accounts")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> {
+                        importFileLauncher.launch(
+                            arrayOf("application/json", "text/*", "*/*")
+                        )
+                    }
+                    1 -> showPasteJsonDialog()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showPasteJsonDialog() {
+        val editText = EditText(requireContext()).apply {
+            hint = "Paste JSON backup text here..."
+            maxLines = 10
+            isSingleLine = false
+            setPadding(40, 30, 40, 30)
+        }
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("Paste Backup JSON")
+            .setView(editText)
+            .setPositiveButton("Import") { _, _ ->
+                val jsonText = editText.text.toString().trim()
+                if (jsonText.isNotEmpty()) {
+                    processImportJson(jsonText)
+                } else {
+                    Toast.makeText(requireContext(), "JSON cannot be empty", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun importFromUri(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                val jsonText = withContext(Dispatchers.IO) {
+                    requireContext().contentResolver.openInputStream(uri)?.use { stream ->
+                        BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).readText()
+                    }
+                }
+                if (jsonText.isNullOrBlank()) {
+                    Toast.makeText(requireContext(), "Selected file is empty", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                processImportJson(jsonText)
+            } catch (e: Exception) {
+                Toast.makeText(
+                    requireContext(),
+                    "Failed reading file: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun processImportJson(jsonText: String) {
+        lifecycleScope.launch {
+            val result = repository.importAccountsJson(jsonText)
+            updateAccountStats()
+
+            AlertDialog.Builder(requireContext())
+                .setTitle("Import Result")
+                .setMessage(
+                    "Pinterest Accounts: ${result.pinterestImported}\n" +
+                    "Instagram Accounts: ${result.instagramImported}\n\n" +
+                    result.message
+                )
+                .setPositiveButton("OK", null)
+                .show()
         }
     }
 

@@ -97,7 +97,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 posted_at INTEGER,
                 instagram_account_id INTEGER,
                 created_at INTEGER,
-                raw_json TEXT
+                raw_json TEXT,
+                post_url TEXT
             )
             """.trimIndent()
         )
@@ -110,13 +111,24 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 instagram_account_id INTEGER,
                 status TEXT,
                 message TEXT,
-                timestamp INTEGER
+                timestamp INTEGER,
+                post_url TEXT
             )
             """.trimIndent()
         )
 
         // Seed some starter search keywords
         insertDefaultKeywords(db)
+    }
+
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        try {
+            db.execSQL("ALTER TABLE $TABLE_POST_LOGS ADD COLUMN post_url TEXT")
+        } catch (_: Exception) {}
+        try {
+            db.execSQL("ALTER TABLE $TABLE_SAVED_PINS ADD COLUMN post_url TEXT")
+        } catch (_: Exception) {}
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -436,12 +448,20 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return list
     }
 
-    fun markPinAsPosted(pinId: String, instagramAccountId: Long, postedAt: Long = System.currentTimeMillis()) {
+    fun markPinAsPosted(
+        pinId: String,
+        instagramAccountId: Long,
+        postedAt: Long = System.currentTimeMillis(),
+        postUrl: String? = null
+    ) {
         val db = writableDatabase
         val cv = ContentValues().apply {
             put("is_posted", 1)
             put("posted_at", postedAt)
             put("instagram_account_id", instagramAccountId)
+            if (!postUrl.isNullOrBlank()) {
+                put("post_url", postUrl)
+            }
         }
         db.update(TABLE_SAVED_PINS, cv, "pin_id = ?", arrayOf(pinId))
     }
@@ -452,6 +472,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     private fun cursorToSavedPin(cursor: Cursor): SavedPin {
+        val postUrlIdx = cursor.getColumnIndex("post_url")
+        val postUrl = if (postUrlIdx != -1 && !cursor.isNull(postUrlIdx)) cursor.getString(postUrlIdx) else null
+
         return SavedPin(
             pinId = cursor.getString(cursor.getColumnIndexOrThrow("pin_id")),
             pinterestAccountId = cursor.getLong(cursor.getColumnIndexOrThrow("pinterest_account_id")),
@@ -464,7 +487,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             postedAt = if (cursor.isNull(cursor.getColumnIndexOrThrow("posted_at"))) null else cursor.getLong(cursor.getColumnIndexOrThrow("posted_at")),
             instagramAccountId = if (cursor.isNull(cursor.getColumnIndexOrThrow("instagram_account_id"))) null else cursor.getLong(cursor.getColumnIndexOrThrow("instagram_account_id")),
             createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
-            rawJson = cursor.getString(cursor.getColumnIndexOrThrow("raw_json")) ?: ""
+            rawJson = cursor.getString(cursor.getColumnIndexOrThrow("raw_json")) ?: "",
+            postUrl = postUrl
         )
     }
 
@@ -477,6 +501,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("status", log.status)
             put("message", log.message)
             put("timestamp", log.timestamp)
+            put("post_url", log.postUrl ?: log.getEffectivePostUrl())
         }
         return db.insert(TABLE_POST_LOGS, null, cv)
     }
@@ -487,6 +512,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val cursor = db.rawQuery("SELECT * FROM $TABLE_POST_LOGS ORDER BY timestamp DESC LIMIT ?", arrayOf(limit.toString()))
         cursor.use {
             while (it.moveToNext()) {
+                val postUrlIdx = it.getColumnIndex("post_url")
+                val postUrl = if (postUrlIdx != -1 && !it.isNull(postUrlIdx)) it.getString(postUrlIdx) else null
+
                 list.add(
                     PostLog(
                         id = it.getLong(it.getColumnIndexOrThrow("id")),
@@ -494,7 +522,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                         instagramAccountId = if (it.isNull(it.getColumnIndexOrThrow("instagram_account_id"))) null else it.getLong(it.getColumnIndexOrThrow("instagram_account_id")),
                         status = it.getString(it.getColumnIndexOrThrow("status")),
                         message = it.getString(it.getColumnIndexOrThrow("message")),
-                        timestamp = it.getLong(it.getColumnIndexOrThrow("timestamp"))
+                        timestamp = it.getLong(it.getColumnIndexOrThrow("timestamp")),
+                        postUrl = postUrl
                     )
                 )
             }

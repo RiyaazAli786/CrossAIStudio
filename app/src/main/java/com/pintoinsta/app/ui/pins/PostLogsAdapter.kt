@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -16,7 +17,8 @@ import java.util.Date
 import java.util.Locale
 
 class PostLogsAdapter(
-    private var logs: List<PostLog>
+    private var logs: List<PostLog>,
+    var onOpenPostClick: ((String, Long?) -> Unit)? = null
 ) : RecyclerView.Adapter<PostLogsAdapter.ViewHolder>() {
 
     fun updateData(newLogs: List<PostLog>) {
@@ -57,9 +59,31 @@ class PostLogsAdapter(
                 binding.ivLogIcon.setColorFilter(ContextCompat.getColor(context, R.color.status_red))
             }
 
+            val effectiveUrl = log.getEffectivePostUrl()
+            if (!effectiveUrl.isNullOrBlank()) {
+                binding.tvPostUrl.text = effectiveUrl
+                binding.tvPostUrl.visibility = View.VISIBLE
+                binding.btnOpenPost.visibility = View.VISIBLE
+
+                val openAction = {
+                    onOpenPostClick?.invoke(effectiveUrl, log.instagramAccountId)
+                }
+                binding.btnOpenPost.setOnClickListener { openAction() }
+                binding.tvPostUrl.setOnClickListener { openAction() }
+            } else {
+                binding.tvPostUrl.visibility = View.GONE
+                binding.btnOpenPost.visibility = View.GONE
+                binding.btnOpenPost.setOnClickListener(null)
+                binding.tvPostUrl.setOnClickListener(null)
+            }
+
             val copyAction = {
                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val logText = "[$timeStr] Pin ID: ${log.pinId} [${log.status}]\n${log.message}"
+                val logText = if (!effectiveUrl.isNullOrBlank()) {
+                    "[$timeStr] Pin ID: ${log.pinId} [${log.status}]\n${log.message}\n$effectiveUrl"
+                } else {
+                    "[$timeStr] Pin ID: ${log.pinId} [${log.status}]\n${log.message}"
+                }
                 val clip = ClipData.newPlainText("CrossAIStudio Log", logText)
                 clipboard.setPrimaryClip(clip)
                 Toast.makeText(context, "Log copied to clipboard", Toast.LENGTH_SHORT).show()

@@ -14,7 +14,8 @@ data class SavedPin(
     var postedAt: Long? = null,
     var instagramAccountId: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
-    val rawJson: String = ""
+    val rawJson: String = "",
+    var postUrl: String? = null
 ) {
     /**
      * Resolves the actual image URL for thumbnail display or Instagram photo posting.

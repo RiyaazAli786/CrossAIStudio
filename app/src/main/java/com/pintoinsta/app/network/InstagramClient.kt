@@ -192,6 +192,12 @@ class InstagramClient(
         }
     }
 
+    data class InstagramPostResponse(
+        val success: Boolean,
+        val message: String,
+        val postUrl: String? = null
+    )
+
     /**
      * Requirement 5 & 7: Post Photo to Instagram using GramDominator architecture
      */
@@ -199,18 +205,18 @@ class InstagramClient(
         account: InstagramAccount,
         imageBytes: ByteArray,
         caption: String
-    ): Pair<Boolean, String> {
+    ): InstagramPostResponse {
         val uploadId = System.currentTimeMillis().toString()
         val csrf = account.csrfToken.ifEmpty { extractCsrfFromCookies(account.cookies) }
 
         if (csrf.isEmpty()) {
-            return Pair(false, "Missing CSRF token in Instagram account cookies")
+            return InstagramPostResponse(false, "Missing CSRF token in Instagram account cookies")
         }
 
         // Normalize image bytes to prevent Instagram transcode non-retryable failure
         val prepared = prepareImageForInstagram(imageBytes)
         if (prepared == null) {
-            return Pair(false, "Invalid image format: Failed to transcode/decode image bytes for Instagram upload")
+            return InstagramPostResponse(false, "Invalid image format: Failed to transcode/decode image bytes for Instagram upload")
         }
 
         val uploadBytes = prepared.bytes
@@ -275,7 +281,7 @@ class InstagramClient(
         Log.d(TAG, "Upload response HTTP ${uploadRes.code}: $uploadBody")
 
         if (!uploadRes.isSuccessful || !uploadBody.contains("\"status\":\"ok\"")) {
-            return Pair(false, "Photo upload failed: $uploadBody")
+            return InstagramPostResponse(false, "Photo upload failed: $uploadBody")
         }
 
         // Step 3: Configure post via Instagram Media Configure API (GramDominator InstaFunct.cs: ConfigureWeb)
@@ -320,9 +326,38 @@ class InstagramClient(
         Log.d(TAG, "Configure response HTTP ${configRes.code}: $configBody")
 
         return if (configRes.isSuccessful && configBody.contains("\"status\":\"ok\"")) {
-            Pair(true, "Successfully posted to Instagram! (UploadId: $uploadId)")
+            var postUrl: String? = null
+            try {
+                val json = JSONObject(configBody)
+                val media = json.optJSONObject("media")
+                val code = media?.optString("code")?.takeIf { it.isNotBlank() }
+                    ?: json.optString("code").takeIf { it.isNotBlank() }
+
+                if (code != null) {
+                    postUrl = "https://www.instagram.com/reel/$code/"
+                } else {
+                    val pk = media?.optString("pk")?.takeIf { it.isNotBlank() }
+                        ?: media?.optString("id")?.takeIf { it.isNotBlank() }
+                    if (pk != null) {
+                        postUrl = "https://www.instagram.com/p/$pk/"
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed parsing post code from configure response", e)
+            }
+
+            if (postUrl == null && account.username.isNotBlank()) {
+                postUrl = "https://www.instagram.com/${account.username}/"
+            }
+
+            val msg = if (postUrl != null) {
+                "Successfully posted to Instagram!\n$postUrl"
+            } else {
+                "Successfully posted to Instagram! (UploadId: $uploadId)"
+            }
+            InstagramPostResponse(true, msg, postUrl)
         } else {
-            Pair(false, "Configure failed: $configBody")
+            InstagramPostResponse(false, "Configure failed: $configBody")
         }
     }
 

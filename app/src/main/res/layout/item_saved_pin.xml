@@ -102,10 +102,23 @@
         </LinearLayout>
 
         <ImageButton
-            android:id="@+id/btnDeletePin"
+            android:id="@+id/btnOpenReel"
             android:layout_width="38dp"
             android:layout_height="38dp"
             android:layout_marginStart="6dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="View Reel"
+            android:padding="7dp"
+            android:src="@drawable/ic_open_in_new"
+            android:visibility="gone"
+            app:tint="@color/secondary"
+            tools:visibility="visible" />
+
+        <ImageButton
+            android:id="@+id/btnDeletePin"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_marginStart="4dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="Delete Pin"
             android:padding="7dp"

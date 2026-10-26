@@ -13,7 +13,8 @@ import com.pintoinsta.app.databinding.ItemSavedPinBinding
 class SavedPinsAdapter(
     private var pins: List<SavedPin>,
     var onPlayVideoClick: ((SavedPin) -> Unit)? = null,
-    var onDeletePinClick: ((SavedPin) -> Unit)? = null
+    var onDeletePinClick: ((SavedPin) -> Unit)? = null,
+    var onOpenReelClick: ((SavedPin) -> Unit)? = null
 ) : RecyclerView.Adapter<SavedPinsAdapter.ViewHolder>() {
 
     fun updateData(newPins: List<SavedPin>) {
@@ -78,6 +79,16 @@ class SavedPinsAdapter(
                 }
             } else {
                 binding.layoutPinThumb.setOnClickListener(null)
+            }
+
+            if (pin.isPosted && !pin.postUrl.isNullOrBlank()) {
+                binding.btnOpenReel.visibility = View.VISIBLE
+                binding.btnOpenReel.setOnClickListener {
+                    onOpenReelClick?.invoke(pin)
+                }
+            } else {
+                binding.btnOpenReel.visibility = View.GONE
+                binding.btnOpenReel.setOnClickListener(null)
             }
 
             binding.btnDeletePin.setOnClickListener {

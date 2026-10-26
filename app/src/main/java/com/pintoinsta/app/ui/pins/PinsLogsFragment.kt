@@ -1,6 +1,7 @@
 package com.pintoinsta.app.ui.pins
 
 import android.app.Dialog
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -20,6 +21,7 @@ import com.pintoinsta.app.R
 import com.pintoinsta.app.data.model.SavedPin
 import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.databinding.FragmentPinsLogsBinding
+import com.pintoinsta.app.ui.viewer.PostViewerActivity
 import kotlinx.coroutines.launch
 
 class PinsLogsFragment : Fragment() {
@@ -61,14 +63,33 @@ class PinsLogsFragment : Fragment() {
             },
             onDeletePinClick = { pin ->
                 confirmDeletePin(pin)
+            },
+            onOpenReelClick = { pin ->
+                val targetUrl = pin.postUrl?.takeIf { it.isNotBlank() } ?: "https://www.instagram.com/"
+                openReel(targetUrl, pin.instagramAccountId)
             }
         )
         binding.rvSavedPins.layoutManager = LinearLayoutManager(requireContext())
         binding.rvSavedPins.adapter = pinsAdapter
 
-        logsAdapter = PostLogsAdapter(emptyList())
+        logsAdapter = PostLogsAdapter(
+            logs = emptyList(),
+            onOpenPostClick = { url, accountId ->
+                openReel(url, accountId)
+            }
+        )
         binding.rvPostLogs.layoutManager = LinearLayoutManager(requireContext())
         binding.rvPostLogs.adapter = logsAdapter
+    }
+
+    private fun openReel(url: String, accountId: Long?) {
+        val intent = Intent(requireContext(), PostViewerActivity::class.java).apply {
+            putExtra(PostViewerActivity.EXTRA_URL, url)
+            if (accountId != null && accountId != -1L) {
+                putExtra(PostViewerActivity.EXTRA_ACCOUNT_ID, accountId)
+            }
+        }
+        startActivity(intent)
     }
 
     private fun confirmDeletePin(pin: SavedPin) {

@@ -239,20 +239,42 @@ class AppRepository(context: Context) {
             }
 
             val postResult = instagramClient.postPhoto(instaAccount, mediaBytes, caption)
-            if (postResult.first) {
-                dbHelper.markPinAsPosted(pin.pinId, instaAccountId)
-                dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "SUCCESS", message = postResult.second))
+            if (postResult.success) {
+                val postUrl = postResult.postUrl
+                dbHelper.markPinAsPosted(pin.pinId, instaAccountId, postUrl = postUrl)
+                dbHelper.insertPostLog(
+                    PostLog(
+                        pinId = pin.pinId,
+                        instagramAccountId = instaAccountId,
+                        status = "SUCCESS",
+                        message = postResult.message,
+                        postUrl = postUrl
+                    )
+                )
                 successCount++
                 summaryMessages.add("Pin ${pin.pinId}: Posted successfully")
 
-                // Push notification: Post succeeded
-                notificationHelper.notifyPostSuccess(pin.pinId, instaAccount.username, caption)
+                // Push notification: Post succeeded with reel/post URL and account ID
+                notificationHelper.notifyPostSuccess(
+                    pinId = pin.pinId,
+                    igUsername = instaAccount.username,
+                    caption = caption,
+                    postUrl = postUrl,
+                    instagramAccountId = instaAccountId
+                )
             } else {
-                dbHelper.insertPostLog(PostLog(pinId = pin.pinId, instagramAccountId = instaAccountId, status = "FAILED", message = postResult.second))
-                summaryMessages.add("Pin ${pin.pinId}: ${postResult.second}")
+                dbHelper.insertPostLog(
+                    PostLog(
+                        pinId = pin.pinId,
+                        instagramAccountId = instaAccountId,
+                        status = "FAILED",
+                        message = postResult.message
+                    )
+                )
+                summaryMessages.add("Pin ${pin.pinId}: ${postResult.message}")
 
                 // Push notification: Post failed
-                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, postResult.second)
+                notificationHelper.notifyPostFailed(pin.pinId, instaAccount.username, postResult.message)
             }
         }
 

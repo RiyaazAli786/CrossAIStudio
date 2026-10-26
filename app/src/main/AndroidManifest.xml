@@ -39,6 +39,11 @@
             android:exported="false"
             android:parentActivityName=".MainActivity" />
 
+        <activity
+            android:name=".ui.viewer.PostViewerActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity" />
+
         <!-- Persistent Background Automation Service -->
         <service
             android:name=".service.CrossAIPostingService"

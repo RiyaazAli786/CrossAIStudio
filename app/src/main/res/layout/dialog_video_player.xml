@@ -53,6 +53,18 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
+            android:indeterminateTint="@color/pinterest_red"
+            android:visibility="visible" />
+
+        <TextView
+            android:id="@+id/tvVideoStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginTop="36dp"
+            android:textColor="@color/white"
+            android:textSize="12sp"
+            android:text="Buffering video..."
             android:visibility="visible" />
     </FrameLayout>
 

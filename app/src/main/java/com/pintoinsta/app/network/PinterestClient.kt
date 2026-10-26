@@ -305,15 +305,47 @@ class PinterestClient(
                 if (videosObj != null) {
                     val videoListObj = videosObj.optJSONObject("video_list")
                     if (videoListObj != null) {
-                        // Look for V_HLSV4 or V_720P or MP4 or mobile stream
-                        val keys = listOf("V_720P", "V_HLSV4", "V_HLSV3_MOBILE", "V_EXP7")
-                        for (key in keys) {
+                        // Look for direct MP4 first: V_720P, V_EXP7, V_EXP6, V_EXP5, V_EXP4, V_EXP3
+                        val mp4Keys = listOf("V_720P", "V_EXP7", "V_EXP6", "V_EXP5", "V_EXP4", "V_EXP3")
+                        for (key in mp4Keys) {
                             val vObj = videoListObj.optJSONObject(key)
                             val vUrl = vObj?.optString("url") ?: ""
-                            if (vUrl.isNotBlank()) {
+                            if (vUrl.isNotBlank() && vUrl.contains(".mp4")) {
                                 mediaUrl = vUrl
                                 mediaType = "VIDEO"
                                 break
+                            }
+                        }
+
+                        // If not found in primary keys, check any key with .mp4
+                        if (mediaUrl.isEmpty()) {
+                            val iter = videoListObj.keys()
+                            while (iter.hasNext()) {
+                                val key = iter.next()
+                                val vUrl = videoListObj.optJSONObject(key)?.optString("url") ?: ""
+                                if (vUrl.isNotBlank() && vUrl.contains(".mp4")) {
+                                    mediaUrl = vUrl
+                                    mediaType = "VIDEO"
+                                    break
+                                }
+                            }
+                        }
+
+                        // If still empty, check HLS and derive direct 720p/exp7 mp4 equivalent
+                        if (mediaUrl.isEmpty()) {
+                            val hlsKeys = listOf("V_HLSV4", "V_HLSV3_MOBILE")
+                            for (key in hlsKeys) {
+                                val vObj = videoListObj.optJSONObject(key)
+                                val vUrl = vObj?.optString("url") ?: ""
+                                if (vUrl.isNotBlank()) {
+                                    mediaUrl = if (vUrl.contains(".m3u8")) {
+                                        vUrl.replace("/hls/", "/720p/").replace(".m3u8", ".mp4")
+                                    } else {
+                                        vUrl
+                                    }
+                                    mediaType = "VIDEO"
+                                    break
+                                }
                             }
                         }
                     }

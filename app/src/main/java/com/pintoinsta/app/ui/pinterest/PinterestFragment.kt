@@ -150,10 +150,6 @@ class PinterestFragment : Fragment() {
                 Toast.LENGTH_SHORT
             ).show()
 
-            // Requirement 2: Start search/publish when auto post is enabled
-            if (isAuto) {
-                repository.executePublishOrSearchFlow(account.id)
-            }
             loadAccounts()
         }
     }

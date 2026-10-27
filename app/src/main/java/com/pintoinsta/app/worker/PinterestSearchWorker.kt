@@ -37,6 +37,17 @@ class PinterestSearchWorker(
                 return Result.retry()
             }
 
+            val now = System.currentTimeMillis()
+            if (!account.isAutoPostEnabled) {
+                Log.d(TAG, "Auto-post disabled for account: ${account.username}")
+                return Result.success()
+            }
+
+            if (account.nextRunTime !in 1..now) {
+                Log.d(TAG, "Account ${account.username} is not due yet (nextRun: ${account.nextRunTime}, now: $now)")
+                return Result.success()
+            }
+
             Log.d(TAG, "Starting scheduled execution for account: ${account.username}")
             val flowResult = repository.executePublishOrSearchFlow(accountId)
             Log.d(TAG, "Scheduled execution completed: ${flowResult.second}")

@@ -126,8 +126,6 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             """.trimIndent()
         )
 
-        // Seed some starter search keywords
-        insertDefaultKeywords(db)
     }
 
     override fun onOpen(db: SQLiteDatabase) {
@@ -147,6 +145,20 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         try {
             db.execSQL("ALTER TABLE $TABLE_SAVED_PINS ADD COLUMN published_to TEXT")
         } catch (_: Exception) {}
+
+        // Remove any previously seeded default search keywords
+        val legacyDefaultKeywords = listOf(
+            "funny cartoon video",
+            "animated comedy short",
+            "diy crafts art",
+            "nature relaxing video",
+            "trending 3d animation"
+        )
+        for (kw in legacyDefaultKeywords) {
+            try {
+                db.delete(TABLE_SEARCH_KEYWORDS, "keyword = ?", arrayOf(kw))
+            } catch (_: Exception) {}
+        }
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -158,20 +170,14 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         onCreate(db)
     }
 
-    private fun insertDefaultKeywords(db: SQLiteDatabase) {
-        val defaults = listOf(
-            "funny cartoon video",
-            "animated comedy short",
-            "diy crafts art",
-            "nature relaxing video",
-            "trending 3d animation"
+    fun getLastPostTimeForInstagramAccount(instagramAccountId: Long): Long {
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT MAX(timestamp) FROM $TABLE_POST_LOGS WHERE instagram_account_id = ? AND status = 'SUCCESS'",
+            arrayOf(instagramAccountId.toString())
         )
-        for (kw in defaults) {
-            val cv = ContentValues().apply {
-                put("keyword", kw)
-                put("created_at", System.currentTimeMillis())
-            }
-            db.insertWithOnConflict(TABLE_SEARCH_KEYWORDS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+        return cursor.use {
+            if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else 0L
         }
     }
 

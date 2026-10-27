@@ -805,14 +805,7 @@ class WebLoginActivity : AppCompatActivity() {
             val savedAccount = account.copy(id = insertedId)
             ScheduleManager.updateAccountSchedule(applicationContext, savedAccount)
 
-            // Requirement 2: Start publish or search flow immediately upon adding account with auto-post enabled
-            launch(Dispatchers.IO) {
-                try {
-                    repository.executePublishOrSearchFlow(insertedId)
-                } catch (e: Exception) {
-                    Log.e("WebLoginActivity", "Initial auto post execution failed", e)
-                }
-            }
+            // Account is saved with its nextRunTime scheduled properly
 
             // Requirement: On web login via card should not close browser automatic, just grab the fresh session and stay open
             if (isFromCard) {

@@ -22,6 +22,8 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.random.Random
@@ -32,6 +34,7 @@ class AppRepository(private val context: Context) {
     private val pinterestClient = PinterestClient()
     private val instagramClient = InstagramClient()
     private val notificationHelper = NotificationHelper.getInstance(context)
+    private val publishMutex = Mutex()
 
     companion object {
         private const val TAG = "AppRepository"
@@ -226,7 +229,7 @@ class AppRepository(private val context: Context) {
         if (list.isNotEmpty()) {
             list[Random.nextInt(list.size)].keyword
         } else {
-            "funny cartoon video"
+            ""
         }
     }
 
@@ -710,7 +713,7 @@ class AppRepository(private val context: Context) {
     }
 
     /**
-     * Requirement 5: Download each pin and post on Instagram with title as caption
+     * Requirement 5: Download pin and post on Instagram with title as caption (strictly 1 post)
      */
     suspend fun executeInstagramPost(
         pinterestAccountId: Long,
@@ -723,164 +726,149 @@ class AppRepository(private val context: Context) {
         val primaryInstaId = targetAccounts.firstOrNull() ?: pinAccount.linkedInstagramAccountId
             ?: return@withContext Pair(0, "No Instagram account linked to Pinterest account '${pinAccount.username}'")
 
-        val unpostedPins = dbHelper.getUnpostedPins(limit)
+        val unpostedPins = dbHelper.getUnpostedPins(1)
         if (unpostedPins.isEmpty()) {
             return@withContext Pair(0, "No pending pins to post")
         }
 
-        var successCount = 0
-        val summaryMessages = mutableListOf<String>()
-
-        for (pin in unpostedPins) {
-            val res = if (targetAccounts.size > 1) {
-                postPinToMultipleAccounts(pin, targetAccounts)
-            } else {
-                val singleRes = postSinglePin(pin, primaryInstaId)
-                Pair(if (singleRes.first) 1 else 0, singleRes.second)
-            }
-
-            if (res.first > 0) {
-                successCount++
-                summaryMessages.add("Pin ${pin.pinId}: ${res.second}")
-            } else {
-                summaryMessages.add("Pin ${pin.pinId}: ${res.second}")
-            }
+        val targetId = if (targetAccounts.size > 1) {
+            targetAccounts.minByOrNull { dbHelper.getLastPostTimeForInstagramAccount(it) } ?: primaryInstaId
+        } else {
+            primaryInstaId
         }
 
-        Pair(successCount, summaryMessages.joinToString("; "))
+        val pin = unpostedPins.first()
+        val singleRes = postSinglePin(pin, targetId)
+        val success = if (singleRes.first) 1 else 0
+        Pair(success, "Pin ${pin.pinId}: ${singleRes.second}")
     }
 
     /**
-     * Requirement 2 & Requirement 1:
-     * When auto post scheduled time triggers or 'Run Now' is clicked:
-     * Checks if there are pending pins available to publish.
-     * - If available: publishes the existing item first (does NOT search Pinterest).
-     * - If multiple accounts are linked: publishes across them with 5-10m random delay.
-     * - If no items available: searches Pinterest using keyword, saves results, and publishes the first one.
+     * Executes scheduled publish flow or manual 'Run Now':
+     * - Only publishes strictly ONE post per execution.
+     * - Uses user-saved search keywords from Settings (no hardcoded defaults).
+     * - Rotates among linked Instagram accounts if multiple are selected.
+     * - Protected by publishMutex against concurrent duplicate posting.
      */
     suspend fun executePublishOrSearchFlow(pinterestAccountId: Long): Pair<Int, String> = withContext(Dispatchers.IO) {
-        val account = dbHelper.getPinterestAccountById(pinterestAccountId)
-            ?: return@withContext Pair(0, "Pinterest account not found")
+        publishMutex.withLock {
+            val account = dbHelper.getPinterestAccountById(pinterestAccountId)
+                ?: return@withContext Pair(0, "Pinterest account not found")
 
-        val targetAccounts = account.getLinkedInstagramIdList()
-        val primaryTargetId = targetAccounts.firstOrNull() ?: account.linkedInstagramAccountId
-        val effectiveTargetAccounts = if (targetAccounts.isNotEmpty()) {
-            targetAccounts
-        } else {
-            listOfNotNull(primaryTargetId)
-        }
-
-        // CRITICAL OFFLINE PROTECTION:
-        // If device is offline, hold the post without advancing nextRunTime!
-        // This ensures the post is NOT bounced and will publish automatically when connection is restored.
-        if (!NetworkUtils.isOnline(context)) {
-            Log.w(TAG, "Device is offline. Holding scheduled post for account '${account.username}' until online.")
-            dbHelper.insertPostLog(
-                PostLog(
-                    pinId = "OFFLINE",
-                    instagramAccountId = primaryTargetId,
-                    status = "WARNING",
-                    message = "Device is offline. Scheduled post held for @${account.username}; will publish automatically when device comes online."
-                )
-            )
-            return@withContext Pair(0, "Device is offline. Scheduled post held until connection is restored.")
-        }
-
-        if (effectiveTargetAccounts.isEmpty()) {
-            val nextRun = account.calculateNextScheduledTime(System.currentTimeMillis())
-            val msg = "No Instagram accounts linked to publish pins"
-            dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), msg, nextRun)
-            return@withContext Pair(0, msg)
-        }
-
-        // Check unposted pins count. Requirement: Each selected Instagram account gets a UNIQUE post!
-        var unpostedPins = dbHelper.getUnpostedPins(effectiveTargetAccounts.size)
-
-        // If not enough pins available for all selected accounts, search Pinterest using saved keywords
-        if (unpostedPins.size < effectiveTargetAccounts.size) {
-            val needed = effectiveTargetAccounts.size - unpostedPins.size
-            Log.d(TAG, "Need $needed more unique unposted pins. Searching Pinterest using settings saved keywords...")
-
-            val savedKeywords = dbHelper.getAllSearchKeywords()
-                .map { it.keyword.trim() }
-                .filter { it.isNotEmpty() }
-            val keywordsToTry = if (savedKeywords.isNotEmpty()) {
-                savedKeywords.shuffled()
+            val targetAccounts = account.getLinkedInstagramIdList()
+            val primaryTargetId = targetAccounts.firstOrNull() ?: account.linkedInstagramAccountId
+            val effectiveTargetAccounts = if (targetAccounts.isNotEmpty()) {
+                targetAccounts
             } else {
-                listOf(
-                    "funny cartoon video",
-                    "animated comedy short",
-                    "diy crafts art",
-                    "nature relaxing video",
-                    "trending 3d animation"
-                )
+                listOfNotNull(primaryTargetId)
             }
 
-            dbHelper.insertPostLog(
-                PostLog(
-                    pinId = "SEARCH",
-                    instagramAccountId = primaryTargetId,
-                    status = "INFO",
-                    message = "Searching Pinterest for fresh unique pins (${keywordsToTry.size} keyword(s) available) for @${account.username}..."
+            // Offline protection: hold post if offline
+            if (!NetworkUtils.isOnline(context)) {
+                Log.w(TAG, "Device is offline. Holding scheduled post for account '${account.username}' until online.")
+                dbHelper.insertPostLog(
+                    PostLog(
+                        pinId = "OFFLINE",
+                        instagramAccountId = primaryTargetId,
+                        status = "WARNING",
+                        message = "Device is offline. Scheduled post held for @${account.username}; will publish automatically when device comes online."
+                    )
                 )
-            )
+                return@withContext Pair(0, "Device is offline. Scheduled post held until connection is restored.")
+            }
 
-            for (kw in keywordsToTry) {
-                Log.d(TAG, "Searching Pinterest with saved keyword '$kw'...")
-                val res = executePinterestSearch(account.id, kw)
-                if (res.first > 0) {
-                    break
+            if (effectiveTargetAccounts.isEmpty()) {
+                val nextRun = account.calculateNextScheduledTime(System.currentTimeMillis())
+                val msg = "No Instagram accounts linked to publish pins"
+                dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), msg, nextRun)
+                return@withContext Pair(0, msg)
+            }
+
+            // Select 1 Instagram account (if multiple linked, choose least recently posted)
+            val targetInstaId = if (effectiveTargetAccounts.size > 1) {
+                effectiveTargetAccounts.minByOrNull { instaId ->
+                    dbHelper.getLastPostTimeForInstagramAccount(instaId)
+                } ?: effectiveTargetAccounts.first()
+            } else {
+                effectiveTargetAccounts.first()
+            }
+
+            // Advance nextRunTime immediately so other tickers/receivers don't re-trigger
+            val tentativeNextRun = account.calculateNextScheduledTime(System.currentTimeMillis() + 60_000L)
+            dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), "Publishing in progress...", tentativeNextRun)
+
+            // Strictly 1 unposted pin is published
+            var unpostedPins = dbHelper.getUnpostedPins(1)
+
+            // If no pins available, search Pinterest using user's saved keywords
+            if (unpostedPins.isEmpty()) {
+                val savedKeywords = dbHelper.getAllSearchKeywords()
+                    .map { it.keyword.trim() }
+                    .filter { it.isNotEmpty() }
+
+                if (savedKeywords.isEmpty()) {
+                    val nextRun = account.calculateNextScheduledTime(System.currentTimeMillis())
+                    val msg = "No search keywords configured in Settings. Please add keywords in Settings tab."
+                    Log.w(TAG, msg)
+                    dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), msg, nextRun)
+                    dbHelper.insertPostLog(
+                        PostLog(
+                            pinId = "KEYWORD",
+                            instagramAccountId = targetInstaId,
+                            status = "WARNING",
+                            message = msg
+                        )
+                    )
+                    return@withContext Pair(0, msg)
                 }
+
+                val keywordsToTry = savedKeywords.shuffled()
+                dbHelper.insertPostLog(
+                    PostLog(
+                        pinId = "SEARCH",
+                        instagramAccountId = targetInstaId,
+                        status = "INFO",
+                        message = "Searching Pinterest for fresh pins (${keywordsToTry.size} keyword(s) available) for @${account.username}..."
+                    )
+                )
+
+                for (kw in keywordsToTry) {
+                    Log.d(TAG, "Searching Pinterest with saved keyword '$kw'...")
+                    val res = executePinterestSearch(account.id, kw)
+                    if (res.first > 0) {
+                        break
+                    }
+                }
+
+                // Refresh available unposted pins
+                unpostedPins = dbHelper.getUnpostedPins(1)
             }
 
-            // Refresh available unposted pins
-            unpostedPins = dbHelper.getUnpostedPins(effectiveTargetAccounts.size)
-        }
+            if (unpostedPins.isEmpty()) {
+                val nextRun = account.calculateNextScheduledTime(System.currentTimeMillis())
+                val failMsg = "No pins available to publish and search returned 0 pins."
+                dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), failMsg, nextRun)
+                return@withContext Pair(0, failMsg)
+            }
 
-        if (unpostedPins.isEmpty()) {
+            // Publish exactly ONE pin to the selected Instagram account
+            val pinToPublish = unpostedPins.first()
+            val instaAccount = dbHelper.getInstagramAccountById(targetInstaId)
+            val igUser = instaAccount?.username ?: "account_$targetInstaId"
+
+            Log.d(TAG, "Publishing single pin ${pinToPublish.pinId} to @$igUser")
+            val singleRes = postSinglePin(pinToPublish, targetInstaId)
+
             val nextRun = account.calculateNextScheduledTime(System.currentTimeMillis())
-            val failMsg = "No pins available to publish and search returned 0 pins."
-            dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), failMsg, nextRun)
-            return@withContext Pair(0, failMsg)
-        }
-
-        // Publish a UNIQUE pin to each selected Instagram account
-        var totalSuccess = 0
-        val resultsSummary = mutableListOf<String>()
-
-        for (i in effectiveTargetAccounts.indices) {
-            val instaId = effectiveTargetAccounts[i]
-            val instaAccount = dbHelper.getInstagramAccountById(instaId)
-            val igUser = instaAccount?.username ?: "account_$instaId"
-
-            val pinForAccount = unpostedPins.getOrNull(i)
-                ?: dbHelper.getUnpostedPins(1).firstOrNull()
-
-            if (pinForAccount == null) {
-                resultsSummary.add("@$igUser: No unique pin available")
-                continue
-            }
-
-            // Slight delay between publishing to multiple accounts to avoid simultaneous network bursts
-            if (i > 0) {
-                delay(3000L)
-            }
-
-            Log.d(TAG, "Publishing unique pin ${pinForAccount.pinId} to @$igUser")
-            val singleRes = postSinglePin(pinForAccount, instaId)
-            if (singleRes.first) {
-                totalSuccess++
-                resultsSummary.add("@$igUser: Success (${pinForAccount.pinId})")
+            val statusMsg = if (singleRes.first) {
+                "Published 1 post to @$igUser (${pinToPublish.pinId}): Success"
             } else {
-                resultsSummary.add("@$igUser: Failed (${singleRes.second})")
+                "Failed publishing to @$igUser (${pinToPublish.pinId}): ${singleRes.second}"
             }
+            dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), statusMsg, nextRun)
+
+            Pair(if (singleRes.first) 1 else 0, statusMsg)
         }
-
-        val nextRun = account.calculateNextScheduledTime(System.currentTimeMillis())
-        val statusMsg = "Published $totalSuccess/${effectiveTargetAccounts.size} unique post(s). ${resultsSummary.joinToString("; ")}"
-        dbHelper.updatePinterestAccountRunInfo(account.id, System.currentTimeMillis(), statusMsg, nextRun)
-
-        Pair(totalSuccess, statusMsg)
     }
 
     // --- ANALYTICS ---
@@ -892,6 +880,7 @@ class AppRepository(private val context: Context) {
     data class ImportResult(
         val pinterestImported: Int,
         val instagramImported: Int,
+        val keywordsImported: Int = 0,
         val message: String
     )
 
@@ -1052,17 +1041,31 @@ class AppRepository(private val context: Context) {
                     })
                 }
             }
+            val keywordsList = dbHelper.getAllSearchKeywords()
+            val keywordsArray = JSONArray()
+            val searchKeywordsArray = JSONArray()
+            for (kw in keywordsList) {
+                keywordsArray.put(kw.keyword)
+                searchKeywordsArray.put(JSONObject().apply {
+                    put("id", kw.id)
+                    put("keyword", kw.keyword)
+                    put("createdAt", kw.createdAt)
+                })
+            }
+            put("keywords", keywordsArray)
+            put("searchKeywords", searchKeywordsArray)
             put("instagramAccounts", instaArray)
             put("accounts", unifiedAccounts)
             put("sessions", sessionsArray)
         }
 
         val jsonOutput = root.toString(2)
+        val kwCount = dbHelper.getAllSearchKeywords().size
         dbHelper.insertPostLog(
             PostLog(
                 pinId = "BACKUP",
                 status = "INFO",
-                message = "Exported backup: ${pinterestAccounts.size} Pinterest and ${instagramAccounts.size} Instagram account(s) with session data"
+                message = "Exported backup: ${pinterestAccounts.size} Pinterest, ${instagramAccounts.size} Instagram account(s), and $kwCount keyword(s) with session data"
             )
         )
         jsonOutput
@@ -1071,8 +1074,23 @@ class AppRepository(private val context: Context) {
     suspend fun importAccountsJson(jsonString: String): ImportResult = withContext(Dispatchers.IO) {
         var pinCount = 0
         var instaCount = 0
+        var keywordCount = 0
         try {
             val cleanJson = jsonString.trim()
+
+            // Helper to parse and insert search keywords
+            fun parseAndInsertKeyword(item: Any?): Boolean {
+                val kw = when (item) {
+                    is String -> item.trim()
+                    is JSONObject -> item.optString("keyword").trim()
+                    else -> item?.toString()?.trim() ?: ""
+                }
+                if (kw.isNotBlank()) {
+                    val id = dbHelper.addSearchKeyword(kw)
+                    return id != -1L
+                }
+                return false
+            }
 
             // Helper to parse and insert/update an Instagram account object
             fun parseAndInsertInstagram(obj: JSONObject): Boolean {
@@ -1212,12 +1230,18 @@ class AppRepository(private val context: Context) {
                 // Root is a direct JSONArray
                 val array = JSONArray(cleanJson)
                 for (i in 0 until array.length()) {
-                    val obj = array.optJSONObject(i) ?: continue
-                    val platform = obj.optString("platform", "").uppercase()
-                    if (platform == "INSTAGRAM" || obj.has("dsUserId") || obj.has("sessionid") || obj.optString("cookies").contains("sessionid")) {
-                        if (parseAndInsertInstagram(obj)) instaCount++
-                    } else if (platform == "PINTEREST" || obj.has("_pinterest_sess") || obj.optString("cookies").contains("_pinterest_sess")) {
-                        if (parseAndInsertPinterest(obj)) pinCount++
+                    val item = array.opt(i)
+                    if (item is String) {
+                        if (parseAndInsertKeyword(item)) keywordCount++
+                    } else if (item is JSONObject) {
+                        val platform = item.optString("platform", "").uppercase()
+                        if (platform == "INSTAGRAM" || item.has("dsUserId") || item.has("sessionid") || item.optString("cookies").contains("sessionid")) {
+                            if (parseAndInsertInstagram(item)) instaCount++
+                        } else if (platform == "PINTEREST" || item.has("_pinterest_sess") || item.optString("cookies").contains("_pinterest_sess")) {
+                            if (parseAndInsertPinterest(item)) pinCount++
+                        } else if (item.has("keyword")) {
+                            if (parseAndInsertKeyword(item)) keywordCount++
+                        }
                     }
                 }
             } else {
@@ -1268,20 +1292,31 @@ class AppRepository(private val context: Context) {
                         }
                     }
                 }
+
+                // 5. Process search keywords array if present
+                val kwArray = root.optJSONArray("keywords") ?: root.optJSONArray("searchKeywords")
+                if (kwArray != null) {
+                    for (i in 0 until kwArray.length()) {
+                        if (parseAndInsertKeyword(kwArray.opt(i))) {
+                            keywordCount++
+                        }
+                    }
+                }
             }
 
             dbHelper.insertPostLog(
                 PostLog(
                     pinId = "BACKUP",
                     status = "SUCCESS",
-                    message = "Imported $pinCount Pinterest and $instaCount Instagram account(s) with session data successfully"
+                    message = "Imported $pinCount Pinterest, $instaCount Instagram account(s), and $keywordCount search keyword(s) with session data successfully"
                 )
             )
 
             ImportResult(
                 pinterestImported = pinCount,
                 instagramImported = instaCount,
-                message = "Imported $pinCount Pinterest and $instaCount Instagram account(s) successfully"
+                keywordsImported = keywordCount,
+                message = "Imported $pinCount Pinterest, $instaCount Instagram account(s), and $keywordCount search keyword(s) successfully"
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to import accounts JSON", e)
@@ -1295,6 +1330,7 @@ class AppRepository(private val context: Context) {
             ImportResult(
                 pinterestImported = 0,
                 instagramImported = 0,
+                keywordsImported = 0,
                 message = "Failed to parse JSON: ${e.message}"
             )
         }

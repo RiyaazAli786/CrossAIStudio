@@ -176,8 +176,9 @@ class SettingsFragment : Fragment() {
         lifecycleScope.launch {
             val pinAccounts = repository.getAllPinterestAccounts()
             val instaAccounts = repository.getAllInstagramAccounts()
+            val keywords = repository.getAllKeywords()
             binding.tvAccountStats.text =
-                "Saved Accounts: ${pinAccounts.size} Pinterest • ${instaAccounts.size} Instagram"
+                "Saved: ${pinAccounts.size} Pinterest • ${instaAccounts.size} Instagram • ${keywords.size} Keywords"
         }
     }
 
@@ -185,11 +186,12 @@ class SettingsFragment : Fragment() {
         lifecycleScope.launch {
             val pinAccounts = repository.getAllPinterestAccounts()
             val instaAccounts = repository.getAllInstagramAccounts()
+            val keywords = repository.getAllKeywords()
 
-            if (pinAccounts.isEmpty() && instaAccounts.isEmpty()) {
+            if (pinAccounts.isEmpty() && instaAccounts.isEmpty() && keywords.isEmpty()) {
                 Toast.makeText(
                     requireContext(),
-                    "No logged-in accounts found to export",
+                    "No logged-in accounts or keywords found to export",
                     Toast.LENGTH_SHORT
                 ).show()
                 return@launch
@@ -202,7 +204,7 @@ class SettingsFragment : Fragment() {
             )
 
             AlertDialog.Builder(requireContext())
-                .setTitle("Export All Logged-In Accounts")
+                .setTitle("Export Accounts & Search Keywords")
                 .setItems(options) { _, which ->
                     when (which) {
                         0 -> {
@@ -357,12 +359,14 @@ class SettingsFragment : Fragment() {
         lifecycleScope.launch {
             val result = repository.importAccountsJson(jsonText)
             updateAccountStats()
+            loadKeywords()
 
             AlertDialog.Builder(requireContext())
                 .setTitle("Import Result")
                 .setMessage(
                     "Pinterest Accounts: ${result.pinterestImported}\n" +
-                    "Instagram Accounts: ${result.instagramImported}\n\n" +
+                    "Instagram Accounts: ${result.instagramImported}\n" +
+                    "Search Keywords: ${result.keywordsImported}\n\n" +
                     result.message
                 )
                 .setPositiveButton("OK", null)

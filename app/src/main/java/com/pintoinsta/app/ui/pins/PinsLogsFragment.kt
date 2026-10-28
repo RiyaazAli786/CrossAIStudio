@@ -1,12 +1,16 @@
 package com.pintoinsta.app.ui.pins
 
 import android.app.Dialog
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.MediaController
@@ -14,13 +18,15 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
-import android.util.Log
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.pintoinsta.app.R
+import com.pintoinsta.app.data.model.PinterestAccount
 import com.pintoinsta.app.data.model.SavedPin
 import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.databinding.FragmentPinsLogsBinding
@@ -32,19 +38,43 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import androidx.viewpager2.widget.ViewPager2
+import com.pintoinsta.app.databinding.LayoutPageLogsBinding
+import com.pintoinsta.app.databinding.LayoutPageSavedPinsBinding
+import com.pintoinsta.app.databinding.LayoutPageSearchBinding
 
 class PinsLogsFragment : Fragment() {
 
     private var _binding: FragmentPinsLogsBinding? = null
     private val binding get() = _binding!!
 
+    private var _pageSearchBinding: LayoutPageSearchBinding? = null
+    private val pageSearchBinding get() = _pageSearchBinding!!
+
+    private var _pagePinsBinding: LayoutPageSavedPinsBinding? = null
+    private val pagePinsBinding get() = _pagePinsBinding!!
+
+    private var _pageLogsBinding: LayoutPageLogsBinding? = null
+    private val pageLogsBinding get() = _pageLogsBinding!!
+
     private lateinit var repository: AppRepository
     private lateinit var pinsAdapter: SavedPinsAdapter
     private lateinit var logsAdapter: PostLogsAdapter
+    private lateinit var searchAdapter: SearchPinsAdapter
 
     private var allPins: List<SavedPin> = emptyList()
     private var currentSubTabId: Int = R.id.btnSubSaved
+
+    // Custom Search State
+    private var currentSearchQuery: String = ""
+    private var currentBookmark: String? = null
+    private var currentScope: String = "pins"
+    private var isSearching: Boolean = false
+    private var searchAccount: PinterestAccount? = null
+
+    // Auto-update logs job
+    private var logPollingJob: Job? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -52,6 +82,9 @@ class PinsLogsFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View {
         _binding = FragmentPinsLogsBinding.inflate(inflater, container, false)
+        _pageSearchBinding = LayoutPageSearchBinding.inflate(inflater, binding.viewPager, false)
+        _pagePinsBinding = LayoutPageSavedPinsBinding.inflate(inflater, binding.viewPager, false)
+        _pageLogsBinding = LayoutPageLogsBinding.inflate(inflater, binding.viewPager, false)
         return binding.root
     }
 
@@ -59,16 +92,107 @@ class PinsLogsFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         repository = AppRepository.getInstance(requireContext())
 
+        setupViewPager()
         setupRecyclerViews()
         setupListeners()
+        updateSearchAccountIndicator()
     }
 
     override fun onResume() {
         super.onResume()
         loadData()
+        updateSearchAccountIndicator()
+        startAutoUpdatingLogs()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        stopAutoUpdatingLogs()
+    }
+
+    private fun setupViewPager() {
+        val pages = listOf(pageSearchBinding.root, pagePinsBinding.root, pageLogsBinding.root)
+        binding.viewPager.adapter = DirectViewsPagerAdapter(pages)
+        binding.viewPager.offscreenPageLimit = 2
+
+        // Swipe Left/Right page change callback
+        binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+            override fun onPageSelected(position: Int) {
+                super.onPageSelected(position)
+                when (position) {
+                    0 -> {
+                        if (binding.bottomSubTabsGroup.checkedButtonId != R.id.btnSubTabSearch) {
+                            binding.bottomSubTabsGroup.check(R.id.btnSubTabSearch)
+                        }
+                        binding.tvHeaderTitle.text = "Pinterest Search"
+                        binding.btnClearLogs.visibility = View.GONE
+                        updateSearchSelectionUI(searchAdapter.getSelectedCount(), searchAdapter.getTotalCount())
+                    }
+                    1 -> {
+                        if (binding.bottomSubTabsGroup.checkedButtonId != R.id.btnSubTabPins) {
+                            binding.bottomSubTabsGroup.check(R.id.btnSubTabPins)
+                        }
+                        binding.tvHeaderTitle.text = "Saved Pins Vault"
+                        binding.btnClearLogs.visibility = View.GONE
+                        filterAndDisplayPins()
+                        updateSelectionUI()
+                    }
+                    2 -> {
+                        if (binding.bottomSubTabsGroup.checkedButtonId != R.id.btnSubTabLogs) {
+                            binding.bottomSubTabsGroup.check(R.id.btnSubTabLogs)
+                        }
+                        binding.tvHeaderTitle.text = "Activity Logs"
+                        binding.btnClearLogs.visibility = if (logsAdapter.itemCount > 0) View.VISIBLE else View.GONE
+                        loadLogsSilently()
+                    }
+                }
+            }
+        })
+
+        // Bottom subtabs click listener
+        binding.bottomSubTabsGroup.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (isChecked) {
+                val targetPage = when (checkedId) {
+                    R.id.btnSubTabSearch -> 0
+                    R.id.btnSubTabPins -> 1
+                    R.id.btnSubTabLogs -> 2
+                    else -> 0
+                }
+                if (binding.viewPager.currentItem != targetPage) {
+                    binding.viewPager.setCurrentItem(targetPage, true)
+                }
+            }
+        }
     }
 
     private fun setupRecyclerViews() {
+        // 1. Search Results Adapter
+        searchAdapter = SearchPinsAdapter(
+            onSaveSinglePinClick = { pin, _ ->
+                saveSinglePinFromSearch(pin)
+            },
+            onLoadMoreClick = {
+                loadMoreSearchResults()
+            },
+            onSelectionChanged = { selectedCount, totalCount ->
+                updateSearchSelectionUI(selectedCount, totalCount)
+            }
+        )
+        pageSearchBinding.rvSearchResults.layoutManager = LinearLayoutManager(requireContext())
+        pageSearchBinding.rvSearchResults.adapter = searchAdapter
+
+        pageSearchBinding.rvSearchResults.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                super.onScrolled(recyclerView, dx, dy)
+                if (dy > 0 && !recyclerView.canScrollVertically(1)) {
+                    if (searchAdapter.hasMore && !searchAdapter.isLoadingMore && !isSearching) {
+                        loadMoreSearchResults()
+                    }
+                }
+            }
+        })
+
+        // 2. Saved Pins Adapter
         pinsAdapter = SavedPinsAdapter(
             pins = emptyList(),
             onPlayVideoClick = { pin ->
@@ -87,45 +211,89 @@ class PinsLogsFragment : Fragment() {
             onItemLongClick = {
                 updateSelectionUI()
             },
-            onSelectionChanged = { selectedCount, totalCount ->
+            onSelectionChanged = { _, _ ->
                 updateSelectionUI()
             }
         )
-        binding.rvSavedPins.layoutManager = LinearLayoutManager(requireContext())
-        binding.rvSavedPins.adapter = pinsAdapter
+        pagePinsBinding.rvSavedPins.layoutManager = LinearLayoutManager(requireContext())
+        pagePinsBinding.rvSavedPins.adapter = pinsAdapter
 
+        // 3. Activity Logs Adapter
         logsAdapter = PostLogsAdapter(
             logs = emptyList(),
             onOpenPostClick = { url, accountId ->
                 openReel(url, accountId)
             }
         )
-        binding.rvPostLogs.layoutManager = LinearLayoutManager(requireContext())
-        binding.rvPostLogs.adapter = logsAdapter
+        pageLogsBinding.rvPostLogs.layoutManager = LinearLayoutManager(requireContext())
+        pageLogsBinding.rvPostLogs.adapter = logsAdapter
     }
 
     private fun setupListeners() {
-        // Top-level tabs: Saved Pins vs Activity Logs
-        binding.toggleGroup.addOnButtonCheckedListener { _, checkedId, isChecked ->
-            if (isChecked) {
-                if (checkedId == R.id.btnTabPins) {
-                    binding.rvSavedPins.visibility = View.VISIBLE
-                    binding.rvPostLogs.visibility = View.GONE
-                    binding.layoutSubTabs.visibility = View.VISIBLE
-                    binding.btnClearLogs.visibility = View.GONE
-                    updateSelectionUI()
-                } else {
-                    binding.rvSavedPins.visibility = View.GONE
-                    binding.rvPostLogs.visibility = View.VISIBLE
-                    binding.layoutSubTabs.visibility = View.GONE
-                    binding.layoutSelectionBar.visibility = View.GONE
-                }
-                loadData()
+        // Search Input listeners
+        pageSearchBinding.etSearchQuery.doAfterTextChanged { s ->
+            val query = s?.toString()?.trim() ?: ""
+            pageSearchBinding.btnClearSearch.visibility = if (query.isNotEmpty()) View.VISIBLE else View.GONE
+        }
+
+        // Clear Search option
+        pageSearchBinding.btnClearSearch.setOnClickListener {
+            pageSearchBinding.etSearchQuery.setText("")
+            pageSearchBinding.btnClearSearch.visibility = View.GONE
+            searchAdapter.clearAll()
+            currentSearchQuery = ""
+            currentBookmark = null
+            pageSearchBinding.layoutSearchInitialState.visibility = View.VISIBLE
+            pageSearchBinding.tvSearchEmptyTitle.text = "Search anything on Pinterest"
+            pageSearchBinding.tvSearchEmptySub.text = "Type keywords like 'aesthetic wallpaper', 'diy crafts', or 'comedy reels' to find pins and save them to your vault."
+            pageSearchBinding.layoutSearchSelectionBar.visibility = View.GONE
+        }
+
+        // Search submit button
+        pageSearchBinding.btnSearchSubmit.setOnClickListener {
+            val query = pageSearchBinding.etSearchQuery.text.toString().trim()
+            hideKeyboard()
+            performPinterestSearch(query)
+        }
+
+        // Keyboard search action
+        pageSearchBinding.etSearchQuery.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                hideKeyboard()
+                val query = pageSearchBinding.etSearchQuery.text.toString().trim()
+                performPinterestSearch(query)
+                true
+            } else {
+                false
             }
         }
 
-        // Sub-tabs: Saved (Pending) vs Published
-        binding.toggleSubTabs.addOnButtonCheckedListener { _, checkedId, isChecked ->
+        // Scope toggle (All Pins vs Videos)
+        pageSearchBinding.toggleScope.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (isChecked) {
+                currentScope = if (checkedId == R.id.btnScopeVideos) "videos" else "pins"
+                if (currentSearchQuery.isNotBlank()) {
+                    performPinterestSearch(currentSearchQuery)
+                }
+            }
+        }
+
+        // Bulk Selection in Search
+        pageSearchBinding.cbSelectAllSearch.setOnClickListener {
+            if (pageSearchBinding.cbSelectAllSearch.isChecked) {
+                searchAdapter.selectAll()
+            } else {
+                searchAdapter.deselectAll()
+            }
+        }
+
+        // Bulk Save Button in Search
+        pageSearchBinding.btnSaveSelectedPins.setOnClickListener {
+            saveSelectedPinsFromSearch()
+        }
+
+        // Sub-tabs in Saved Pins: Saved (Pending) vs Published
+        pagePinsBinding.toggleSubTabs.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (isChecked) {
                 currentSubTabId = checkedId
                 pinsAdapter.setSelectionMode(false)
@@ -134,65 +302,270 @@ class PinsLogsFragment : Fragment() {
             }
         }
 
-        // Select mode toggle button
-        binding.btnSelectMode.setOnClickListener {
+        // Select mode toggle button for Saved Pins
+        pagePinsBinding.btnSelectMode.setOnClickListener {
             val newMode = !pinsAdapter.isSelectionMode
             pinsAdapter.setSelectionMode(newMode)
             updateSelectionUI()
         }
 
-        // Close selection button
-        binding.btnCloseSelection.setOnClickListener {
+        // Close selection button for Saved Pins
+        pagePinsBinding.btnCloseSelection.setOnClickListener {
             pinsAdapter.setSelectionMode(false)
             updateSelectionUI()
         }
 
-        // Select all checkbox
-        binding.cbSelectAll.setOnClickListener {
-            if (binding.cbSelectAll.isChecked) {
+        // Select all checkbox for Saved Pins
+        pagePinsBinding.cbSelectAll.setOnClickListener {
+            if (pagePinsBinding.cbSelectAll.isChecked) {
                 pinsAdapter.selectAll()
             } else {
                 pinsAdapter.clearSelection()
             }
         }
 
-        // Bulk delete button
-        binding.btnBulkDelete.setOnClickListener {
+        // Bulk delete button for Saved Pins
+        pagePinsBinding.btnBulkDelete.setOnClickListener {
             val selectedIds = pinsAdapter.getSelectedPinIds()
             if (selectedIds.isNotEmpty()) {
                 confirmBulkDelete(selectedIds)
             }
         }
 
+        // Top Header Actions
         binding.btnClearLogs.setOnClickListener {
             confirmClearLogs()
         }
 
         binding.btnRefresh.setOnClickListener {
             loadData()
+            updateSearchAccountIndicator()
+            loadLogsSilently()
         }
     }
 
+    /**
+     * Requirement 2: Auto-update logs in real-time.
+     * Combines reactive flow updates and a background heartbeat to guarantee new logs appear immediately.
+     */
+    private fun startAutoUpdatingLogs() {
+        logPollingJob?.cancel()
+        logPollingJob = viewLifecycleOwner.lifecycleScope.launch {
+            // 1. Reactive flow collection
+            launch {
+                repository.logUpdates.collect {
+                    loadLogsSilently()
+                }
+            }
+
+            // 2. Background polling ticker every 2 seconds
+            while (isActive) {
+                delay(2000L)
+                loadLogsSilently()
+            }
+        }
+    }
+
+    private fun stopAutoUpdatingLogs() {
+        logPollingJob?.cancel()
+        logPollingJob = null
+    }
+
+    private fun loadLogsSilently() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val logs = repository.getRecentLogs()
+                val currentLogs = logsAdapter.getCurrentLogs()
+
+                val hasChanged = currentLogs.size != logs.size ||
+                        (logs.isNotEmpty() && currentLogs.isNotEmpty() && logs[0].id != currentLogs[0].id)
+
+                if (hasChanged) {
+                    logsAdapter.updateData(logs)
+                    pageLogsBinding.tvEmptyStateLogs.visibility = if (logs.isEmpty()) View.VISIBLE else View.GONE
+                    if (binding.viewPager.currentItem == 2) {
+                        binding.btnClearLogs.visibility = if (logs.isNotEmpty()) View.VISIBLE else View.GONE
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun updateSearchAccountIndicator() {
+        lifecycleScope.launch {
+            val accounts = repository.getAllPinterestAccounts()
+            searchAccount = accounts.firstOrNull { it.status == "ACTIVE" } ?: accounts.firstOrNull()
+            if (searchAccount != null) {
+                pageSearchBinding.tvSearchAccountIndicator.text = "Searching as @${searchAccount?.username}"
+                pageSearchBinding.tvSearchAccountIndicator.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_secondary))
+            } else {
+                pageSearchBinding.tvSearchAccountIndicator.text = "Guest Mode"
+                pageSearchBinding.tvSearchAccountIndicator.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_muted))
+            }
+        }
+    }
+
+    private fun performPinterestSearch(query: String) {
+        if (query.isEmpty()) {
+            Toast.makeText(requireContext(), "Please enter a search keyword", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        currentSearchQuery = query
+        currentBookmark = null
+        isSearching = true
+        pageSearchBinding.pbSearchLoading.visibility = View.VISIBLE
+        pageSearchBinding.layoutSearchInitialState.visibility = View.GONE
+
+        lifecycleScope.launch {
+            try {
+                val savedIds = repository.getSavedPinIds()
+                val result = repository.searchPinterestCustom(
+                    account = searchAccount,
+                    query = currentSearchQuery,
+                    bookmark = null,
+                    scope = currentScope
+                )
+
+                isSearching = false
+                pageSearchBinding.pbSearchLoading.visibility = View.GONE
+
+                if (result.success) {
+                    currentBookmark = result.bookmark
+                    if (result.pins.isEmpty()) {
+                        searchAdapter.clearAll()
+                        pageSearchBinding.layoutSearchInitialState.visibility = View.VISIBLE
+                        pageSearchBinding.tvSearchEmptyTitle.text = "No pins found"
+                        pageSearchBinding.tvSearchEmptySub.text = "No Pinterest results for '$currentSearchQuery'. Try a different keyword."
+                    } else {
+                        pageSearchBinding.layoutSearchInitialState.visibility = View.GONE
+                        searchAdapter.setData(
+                            newPins = result.pins,
+                            hasMoreResults = !result.bookmark.isNullOrBlank(),
+                            initialSavedIds = savedIds
+                        )
+                    }
+                } else {
+                    pageSearchBinding.layoutSearchInitialState.visibility = View.VISIBLE
+                    pageSearchBinding.tvSearchEmptyTitle.text = "Search Error"
+                    pageSearchBinding.tvSearchEmptySub.text = result.errorMessage ?: "Failed to load pins from Pinterest."
+                    Toast.makeText(requireContext(), "Search error: ${result.errorMessage ?: "Network issue"}", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                isSearching = false
+                pageSearchBinding.pbSearchLoading.visibility = View.GONE
+                pageSearchBinding.layoutSearchInitialState.visibility = View.VISIBLE
+                pageSearchBinding.tvSearchEmptyTitle.text = "Search Error"
+                pageSearchBinding.tvSearchEmptySub.text = e.message ?: "An unexpected error occurred."
+                Log.e("PinsLogsFragment", "Search error", e)
+            }
+        }
+    }
+
+    private fun loadMoreSearchResults() {
+        if (isSearching || currentBookmark.isNullOrBlank() || !searchAdapter.hasMore || searchAdapter.isLoadingMore) {
+            return
+        }
+
+        searchAdapter.setLoadingMore(true)
+        val bookmarkToLoad = currentBookmark!!
+
+        lifecycleScope.launch {
+            try {
+                val result = repository.searchPinterestCustom(
+                    account = searchAccount,
+                    query = currentSearchQuery,
+                    bookmark = bookmarkToLoad,
+                    scope = currentScope
+                )
+
+                searchAdapter.setLoadingMore(false)
+
+                if (result.success) {
+                    currentBookmark = result.bookmark
+                    searchAdapter.appendData(
+                        morePins = result.pins,
+                        hasMoreResults = !result.bookmark.isNullOrBlank()
+                    )
+                } else {
+                    Toast.makeText(requireContext(), "Failed to load more: ${result.errorMessage ?: "Network error"}", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                searchAdapter.setLoadingMore(false)
+                Log.e("PinsLogsFragment", "Pagination error", e)
+            }
+        }
+    }
+
+    private fun saveSinglePinFromSearch(pin: SavedPin) {
+        lifecycleScope.launch {
+            val saved = repository.savePin(pin)
+            if (saved) {
+                searchAdapter.markPinSaved(pin.pinId)
+                Toast.makeText(requireContext(), "Pin saved to Vault!", Toast.LENGTH_SHORT).show()
+                allPins = repository.getAllSavedPins()
+            } else {
+                searchAdapter.markPinSaved(pin.pinId)
+                Toast.makeText(requireContext(), "Pin already in Vault", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun saveSelectedPinsFromSearch() {
+        val selectedPins = searchAdapter.getSelectedPins()
+        if (selectedPins.isEmpty()) {
+            Toast.makeText(requireContext(), "Please select at least one pin", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        lifecycleScope.launch {
+            val count = repository.savePins(selectedPins)
+            searchAdapter.markPinsSaved(selectedPins.map { it.pinId })
+            searchAdapter.deselectAll()
+            Toast.makeText(requireContext(), "Saved $count pin(s) to Saved Pins!", Toast.LENGTH_SHORT).show()
+            allPins = repository.getAllSavedPins()
+        }
+    }
+
+    private fun updateSearchSelectionUI(selectedCount: Int, totalCount: Int) {
+        if (totalCount > 0) {
+            pageSearchBinding.layoutSearchSelectionBar.visibility = View.VISIBLE
+            pageSearchBinding.tvSearchSelectedCount.text = "$selectedCount of $totalCount selected"
+            pageSearchBinding.cbSelectAllSearch.isChecked = selectedCount > 0 && selectedCount == totalCount
+            pageSearchBinding.btnSaveSelectedPins.isEnabled = selectedCount > 0
+            pageSearchBinding.btnSaveSelectedPins.text = if (selectedCount > 0) "Save Selected ($selectedCount)" else "Save Selected"
+        } else {
+            pageSearchBinding.layoutSearchSelectionBar.visibility = View.GONE
+        }
+    }
+
+    private fun hideKeyboard() {
+        try {
+            val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(binding.root.windowToken, 0)
+        } catch (_: Exception) {}
+    }
+
     private fun updateSelectionUI() {
-        val isPinsTab = binding.toggleGroup.checkedButtonId == R.id.btnTabPins
-        if (!isPinsTab) {
-            binding.layoutSelectionBar.visibility = View.GONE
+        val isPinsPage = binding.viewPager.currentItem == 1
+        if (!isPinsPage) {
+            pagePinsBinding.layoutSelectionBar.visibility = View.GONE
             return
         }
 
         val inSelection = pinsAdapter.isSelectionMode
         if (inSelection) {
-            binding.layoutSelectionBar.visibility = View.VISIBLE
-            binding.btnSelectMode.text = "Cancel"
+            pagePinsBinding.layoutSelectionBar.visibility = View.VISIBLE
+            pagePinsBinding.btnSelectMode.text = "Cancel"
             val selectedCount = pinsAdapter.getSelectedCount()
             val totalCount = pinsAdapter.itemCount
-            binding.tvSelectedCount.text = "$selectedCount of $totalCount selected"
-            binding.btnBulkDelete.isEnabled = selectedCount > 0
-            binding.btnBulkDelete.text = if (selectedCount > 0) "Delete ($selectedCount)" else "Delete"
-            binding.cbSelectAll.isChecked = selectedCount > 0 && selectedCount == totalCount
+            pagePinsBinding.tvSelectedCount.text = "$selectedCount of $totalCount selected"
+            pagePinsBinding.btnBulkDelete.isEnabled = selectedCount > 0
+            pagePinsBinding.btnBulkDelete.text = if (selectedCount > 0) "Delete ($selectedCount)" else "Delete"
+            pagePinsBinding.cbSelectAll.isChecked = selectedCount > 0 && selectedCount == totalCount
         } else {
-            binding.layoutSelectionBar.visibility = View.GONE
-            binding.btnSelectMode.text = "Select"
+            pagePinsBinding.layoutSelectionBar.visibility = View.GONE
+            pagePinsBinding.btnSelectMode.text = "Select"
         }
     }
 
@@ -200,24 +573,21 @@ class PinsLogsFragment : Fragment() {
         val unpostedList = allPins.filter { !it.isPosted }
         val publishedList = allPins.filter { it.isPosted }
 
-        binding.btnSubSaved.text = "Saved (${unpostedList.size})"
-        binding.btnSubPublished.text = "Published (${publishedList.size})"
+        pagePinsBinding.btnSubSaved.text = "Saved (${unpostedList.size})"
+        pagePinsBinding.btnSubPublished.text = "Published (${publishedList.size})"
 
         val displayedPins = if (currentSubTabId == R.id.btnSubSaved) unpostedList else publishedList
         pinsAdapter.updateData(displayedPins)
 
-        val isPinsTab = binding.toggleGroup.checkedButtonId == R.id.btnTabPins
-        if (isPinsTab) {
-            if (displayedPins.isEmpty()) {
-                binding.tvEmptyState.visibility = View.VISIBLE
-                binding.tvEmptyState.text = if (currentSubTabId == R.id.btnSubSaved) {
-                    "No pending saved pins.\nScheduled runs will fetch pins automatically."
-                } else {
-                    "No published pins yet.\nPublished reels will appear here."
-                }
+        if (displayedPins.isEmpty()) {
+            pagePinsBinding.tvEmptyStatePins.visibility = View.VISIBLE
+            pagePinsBinding.tvEmptyStatePins.text = if (currentSubTabId == R.id.btnSubSaved) {
+                "No pending saved pins.\nScheduled runs or custom searches will save pins here."
             } else {
-                binding.tvEmptyState.visibility = View.GONE
+                "No published pins yet.\nPublished reels will appear here."
             }
+        } else {
+            pagePinsBinding.tvEmptyStatePins.visibility = View.GONE
         }
     }
 
@@ -229,13 +599,17 @@ class PinsLogsFragment : Fragment() {
             logsAdapter.updateData(logs)
             filterAndDisplayPins()
 
-            val isPinsTab = binding.toggleGroup.checkedButtonId == R.id.btnTabPins
-            if (isPinsTab) {
+            val currentPos = binding.viewPager.currentItem
+            if (currentPos == 0) {
+                binding.btnClearLogs.visibility = View.GONE
+                val savedIds = allPins.map { it.pinId }.toSet()
+                searchAdapter.markPinsSaved(savedIds)
+            } else if (currentPos == 1) {
                 binding.btnClearLogs.visibility = View.GONE
             } else {
                 binding.btnClearLogs.visibility = if (logs.isNotEmpty()) View.VISIBLE else View.GONE
-                binding.tvEmptyState.text = "No activity logs yet.\nLogs will appear after posting runs."
-                binding.tvEmptyState.visibility = if (logs.isEmpty()) View.VISIBLE else View.GONE
+                pageLogsBinding.tvEmptyStateLogs.text = "No activity logs yet.\nLogs will appear automatically in real-time."
+                pageLogsBinding.tvEmptyStateLogs.visibility = if (logs.isEmpty()) View.VISIBLE else View.GONE
             }
         }
     }
@@ -572,6 +946,10 @@ class PinsLogsFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        stopAutoUpdatingLogs()
+        _pageSearchBinding = null
+        _pagePinsBinding = null
+        _pageLogsBinding = null
         _binding = null
     }
 }

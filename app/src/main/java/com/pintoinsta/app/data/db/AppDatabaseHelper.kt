@@ -39,6 +39,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         const val TABLE_SEARCH_KEYWORDS = "search_keywords"
         const val TABLE_SAVED_PINS = "saved_pins"
         const val TABLE_POST_LOGS = "post_logs"
+
+        var onLogInsertedCallback: (() -> Unit)? = null
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -733,7 +735,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("timestamp", log.timestamp)
             put("post_url", log.postUrl ?: log.getEffectivePostUrl())
         }
-        return db.insert(TABLE_POST_LOGS, null, cv)
+        val id = db.insert(TABLE_POST_LOGS, null, cv)
+        onLogInsertedCallback?.invoke()
+        return id
     }
 
     fun getRecentPostLogs(limit: Int = 50): List<PostLog> {

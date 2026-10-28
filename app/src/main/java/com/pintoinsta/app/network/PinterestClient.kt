@@ -38,17 +38,22 @@ class PinterestClient(
      * Requirement 4: Search using template from PinteresetSearch.txt
      */
     fun searchInitial(
-        account: PinterestAccount,
-        keyword: String
+        account: PinterestAccount?,
+        keyword: String,
+        scope: String = "pins"
     ): SearchResult {
         return try {
             val encodedQuery = URLEncoder.encode(keyword, "UTF-8")
-            val sourceUrl = "/search/videos/?filter_location=1&q=$encodedQuery&rs=content_type_filter"
+            val sourceUrl = if (scope == "videos") {
+                "/search/videos/?filter_location=1&q=$encodedQuery&rs=content_type_filter"
+            } else {
+                "/search/pins/?q=$encodedQuery&rs=typed"
+            }
             val encodedSourceUrl = URLEncoder.encode(sourceUrl, "UTF-8")
 
             val optionsJson = JSONObject().apply {
                 put("query", keyword)
-                put("scope", "videos")
+                put("scope", scope)
                 put("appliedProductFilters", "---")
                 put("domains", JSONObject.NULL)
                 put("user", JSONObject.NULL)
@@ -73,7 +78,7 @@ class PinterestClient(
                 put("article", JSONObject.NULL)
                 put("corpus", JSONObject.NULL)
                 put("filters", JSONObject.NULL)
-                put("rs", "content_type_filter")
+                put("rs", if (scope == "videos") "content_type_filter" else "typed")
             }
 
             val dataJson = JSONObject().apply {
@@ -84,7 +89,10 @@ class PinterestClient(
             val encodedData = URLEncoder.encode(dataJson.toString(), "UTF-8")
             val fullUrl = "$BASE_URL?source_url=$encodedSourceUrl&data=$encodedData&_=${System.currentTimeMillis()}"
 
-            val csrf = account.csrfToken.ifEmpty { extractCsrfFromCookies(account.cookies) }
+            val cookies = account?.cookies?.takeIf { it.isNotBlank() } ?: ""
+            val csrf = if (cookies.isNotEmpty()) {
+                account?.csrfToken?.ifEmpty { extractCsrfFromCookies(cookies) } ?: extractCsrfFromCookies(cookies)
+            } else ""
 
             val requestBuilder = Request.Builder()
                 .url(fullUrl)
@@ -99,8 +107,10 @@ class PinterestClient(
                 .header("x-app-version", "472496f")
                 .header("Referer", "https://in.pinterest.com/")
                 .header("Origin", "https://in.pinterest.com")
-                .header("Cookie", account.cookies)
 
+            if (cookies.isNotBlank()) {
+                requestBuilder.header("Cookie", cookies)
+            }
             if (csrf.isNotBlank()) {
                 requestBuilder.header("x-csrftoken", csrf)
             }
@@ -113,7 +123,7 @@ class PinterestClient(
                 return SearchResult(emptyList(), null, false, "HTTP ${response.code}")
             }
 
-            parseSearchResponse(body, account.id, keyword)
+            parseSearchResponse(body, account?.id ?: 0L, keyword)
         } catch (e: Exception) {
             Log.e(TAG, "searchInitial error", e)
             SearchResult(emptyList(), null, false, e.message)
@@ -124,17 +134,22 @@ class PinterestClient(
      * Requirement 4: Pagination Search using template from PinterestSearchWithPagination.txt
      */
     fun searchWithPagination(
-        account: PinterestAccount,
+        account: PinterestAccount?,
         keyword: String,
-        bookmark: String
+        bookmark: String,
+        scope: String = "pins"
     ): SearchResult {
         return try {
             val encodedQuery = URLEncoder.encode(keyword, "UTF-8")
-            val sourceUrl = "/search/videos/?filter_location=1&q=$encodedQuery&rs=content_type_filter"
+            val sourceUrl = if (scope == "videos") {
+                "/search/videos/?filter_location=1&q=$encodedQuery&rs=content_type_filter"
+            } else {
+                "/search/pins/?q=$encodedQuery&rs=typed"
+            }
 
             val optionsJson = JSONObject().apply {
                 put("query", keyword)
-                put("scope", "videos")
+                put("scope", scope)
                 put("appliedProductFilters", "---")
                 put("domains", JSONObject.NULL)
                 put("user", JSONObject.NULL)
@@ -159,7 +174,7 @@ class PinterestClient(
                 put("article", JSONObject.NULL)
                 put("corpus", JSONObject.NULL)
                 put("filters", JSONObject.NULL)
-                put("rs", "content_type_filter")
+                put("rs", if (scope == "videos") "content_type_filter" else "typed")
                 put("bookmarks", org.json.JSONArray().put(bookmark))
             }
 
@@ -173,7 +188,10 @@ class PinterestClient(
                 .add("data", dataJson.toString())
                 .build()
 
-            val csrf = account.csrfToken.ifEmpty { extractCsrfFromCookies(account.cookies) }
+            val cookies = account?.cookies?.takeIf { it.isNotBlank() } ?: ""
+            val csrf = if (cookies.isNotEmpty()) {
+                account?.csrfToken?.ifEmpty { extractCsrfFromCookies(cookies) } ?: extractCsrfFromCookies(cookies)
+            } else ""
 
             val requestBuilder = Request.Builder()
                 .url(BASE_URL)
@@ -188,8 +206,10 @@ class PinterestClient(
                 .header("x-app-version", "472496f")
                 .header("Referer", "https://in.pinterest.com/")
                 .header("Origin", "https://in.pinterest.com")
-                .header("Cookie", account.cookies)
 
+            if (cookies.isNotBlank()) {
+                requestBuilder.header("Cookie", cookies)
+            }
             if (csrf.isNotBlank()) {
                 requestBuilder.header("x-csrftoken", csrf)
             }
@@ -202,7 +222,7 @@ class PinterestClient(
                 return SearchResult(emptyList(), null, false, "HTTP ${response.code}")
             }
 
-            parseSearchResponse(body, account.id, keyword)
+            parseSearchResponse(body, account?.id ?: 0L, keyword)
         } catch (e: Exception) {
             Log.e(TAG, "searchWithPagination error", e)
             SearchResult(emptyList(), null, false, e.message)

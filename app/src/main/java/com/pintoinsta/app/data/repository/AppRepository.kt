@@ -36,6 +36,18 @@ class AppRepository(private val context: Context) {
     private val notificationHelper = NotificationHelper.getInstance(context)
     private val publishMutex = Mutex()
 
+    val logUpdates = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
+
+    fun notifyLogUpdated() {
+        logUpdates.tryEmit(Unit)
+    }
+
+    init {
+        AppDatabaseHelper.onLogInsertedCallback = {
+            notifyLogUpdated()
+        }
+    }
+
     companion object {
         private const val TAG = "AppRepository"
         private var instance: AppRepository? = null
@@ -240,6 +252,66 @@ class AppRepository(private val context: Context) {
 
     suspend fun getUnpostedPins(limit: Int = 10): List<SavedPin> = withContext(Dispatchers.IO) {
         dbHelper.getUnpostedPins(limit)
+    }
+
+    suspend fun savePin(pin: SavedPin): Boolean = withContext(Dispatchers.IO) {
+        val rowId = dbHelper.insertSavedPin(pin)
+        val success = rowId != -1L
+        if (success) {
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = pin.pinId,
+                    status = "SUCCESS",
+                    message = "Saved pin '${pin.title.ifEmpty { pin.pinId }}' to vault"
+                )
+            )
+        }
+        success
+    }
+
+    suspend fun savePins(pins: List<SavedPin>): Int = withContext(Dispatchers.IO) {
+        var count = 0
+        for (pin in pins) {
+            val rowId = dbHelper.insertSavedPin(pin)
+            if (rowId != -1L) {
+                count++
+            }
+        }
+        if (count > 0) {
+            dbHelper.insertPostLog(
+                PostLog(
+                    pinId = "BATCH",
+                    status = "SUCCESS",
+                    message = "Saved $count pins to vault from custom search"
+                )
+            )
+        }
+        count
+    }
+
+    suspend fun isPinSaved(pinId: String): Boolean = withContext(Dispatchers.IO) {
+        dbHelper.getSavedPinById(pinId) != null
+    }
+
+    suspend fun getSavedPinIds(): Set<String> = withContext(Dispatchers.IO) {
+        dbHelper.getAllSavedPins().map { it.pinId }.toSet()
+    }
+
+    suspend fun searchPinterestCustom(
+        account: PinterestAccount?,
+        query: String,
+        bookmark: String? = null,
+        scope: String = "pins"
+    ): PinterestClient.SearchResult = withContext(Dispatchers.IO) {
+        // If account is null, try using first active account from database
+        val effectiveAccount = account ?: dbHelper.getAllPinterestAccounts().firstOrNull { it.status == "ACTIVE" }
+            ?: dbHelper.getAllPinterestAccounts().firstOrNull()
+
+        if (bookmark.isNullOrBlank()) {
+            pinterestClient.searchInitial(effectiveAccount, query, scope)
+        } else {
+            pinterestClient.searchWithPagination(effectiveAccount, query, bookmark, scope)
+        }
     }
 
     suspend fun deleteSavedPin(pinId: String): Boolean = withContext(Dispatchers.IO) {

@@ -6,6 +6,7 @@
     android:background="@color/background"
     android:orientation="vertical">
 
+    <!-- Top Action Header -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -17,10 +18,11 @@
         android:paddingVertical="8dp">
 
         <TextView
+            android:id="@+id/tvHeaderTitle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Saved Pins &amp; Logs"
+            android:text="Pins &amp; Search Vault"
             android:textColor="@color/text_primary"
             android:textSize="18sp"
             android:textStyle="bold" />
@@ -47,186 +49,76 @@
             app:tint="@color/text_primary" />
     </LinearLayout>
 
-    <!-- Top Segmented tabs: Saved Pins vs Logs -->
-    <com.google.android.material.button.MaterialButtonToggleGroup
-        android:id="@+id/toggleGroup"
+    <!-- Main ViewPager2 for left/right swipe between tabs -->
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/viewPager"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginHorizontal="16dp"
-        android:layout_marginTop="8dp"
-        android:layout_marginBottom="6dp"
-        app:checkedButton="@id/btnTabPins"
-        app:selectionRequired="true"
-        app:singleSelection="true">
+        android:layout_height="0dp"
+        android:layout_weight="1" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnTabPins"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Saved Pins"
-            android:textSize="13sp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnTabLogs"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Activity Logs"
-            android:textSize="13sp" />
-    </com.google.android.material.button.MaterialButtonToggleGroup>
-
-    <!-- Sub-tabs row inside Saved Pins: Saved (Pending) vs Published -->
+    <!-- Bottom Subtabs Container (above main bottom navigation) -->
     <LinearLayout
-        android:id="@+id/layoutSubTabs"
+        android:id="@+id/layoutBottomSubTabs"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginHorizontal="16dp"
-        android:layout_marginBottom="6dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:background="@color/surface"
+        android:elevation="4dp"
+        android:orientation="vertical">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/divider" />
 
         <com.google.android.material.button.MaterialButtonToggleGroup
-            android:id="@+id/toggleSubTabs"
-            android:layout_width="0dp"
-            android:layout_height="38dp"
-            android:layout_weight="1"
-            app:checkedButton="@id/btnSubSaved"
+            android:id="@+id/bottomSubTabsGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="12dp"
+            android:layout_marginVertical="6dp"
+            app:checkedButton="@id/btnSubTabSearch"
             app:selectionRequired="true"
             app:singleSelection="true">
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnSubSaved"
+                android:id="@+id/btnSubTabSearch"
                 style="@style/Widget.Material3.Button.OutlinedButton"
                 android:layout_width="0dp"
-                android:layout_height="match_parent"
+                android:layout_height="38dp"
                 android:layout_weight="1"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
-                android:text="Saved (0)"
-                android:textSize="12sp" />
+                android:text="Custom Search"
+                android:textSize="11sp"
+                app:icon="@drawable/ic_search"
+                app:iconSize="14dp" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnSubPublished"
+                android:id="@+id/btnSubTabPins"
                 style="@style/Widget.Material3.Button.OutlinedButton"
                 android:layout_width="0dp"
-                android:layout_height="match_parent"
+                android:layout_height="38dp"
                 android:layout_weight="1"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
-                android:text="Published (0)"
-                android:textSize="12sp" />
+                android:text="Saved Pins"
+                android:textSize="11sp"
+                app:icon="@drawable/ic_pins"
+                app:iconSize="14dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSubTabLogs"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="38dp"
+                android:layout_weight="1"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="Activity Logs"
+                android:textSize="11sp"
+                app:icon="@drawable/ic_refresh"
+                app:iconSize="14dp" />
         </com.google.android.material.button.MaterialButtonToggleGroup>
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSelectMode"
-            style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="38dp"
-            android:layout_marginStart="8dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:text="Select"
-            android:textColor="@color/primary"
-            android:textSize="12sp" />
     </LinearLayout>
-
-    <!-- Bulk Selection Action Bar -->
-    <LinearLayout
-        android:id="@+id/layoutSelectionBar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginHorizontal="16dp"
-        android:layout_marginBottom="6dp"
-        android:background="@drawable/bg_search_chip"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="10dp"
-        android:paddingVertical="4dp"
-        android:visibility="gone">
-
-        <CheckBox
-            android:id="@+id/cbSelectAll"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:buttonTint="@color/primary"
-            android:text="All"
-            android:textColor="@color/text_primary"
-            android:textSize="12sp" />
-
-        <TextView
-            android:id="@+id/tvSelectedCount"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
-            android:text="0 selected"
-            android:textColor="@color/text_primary"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnBulkDelete"
-            style="@style/Widget.Material3.Button.TonalButton"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:backgroundTint="@color/status_red"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:text="Delete"
-            android:textColor="@color/white"
-            android:textSize="12sp"
-            app:icon="@drawable/ic_delete"
-            app:iconSize="14dp"
-            app:iconTint="@color/white" />
-
-        <ImageButton
-            android:id="@+id/btnCloseSelection"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:layout_marginStart="4dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Cancel selection"
-            android:src="@drawable/ic_close"
-            app:tint="@color/text_secondary" />
-    </LinearLayout>
-
-    <FrameLayout
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1">
-
-        <!-- Pins List -->
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rvSavedPins"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:clipToPadding="false"
-            android:paddingVertical="4dp" />
-
-        <!-- Logs List -->
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rvPostLogs"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:clipToPadding="false"
-            android:paddingVertical="4dp"
-            android:visibility="gone" />
-
-        <!-- Empty State -->
-        <TextView
-            android:id="@+id/tvEmptyState"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:gravity="center"
-            android:padding="24dp"
-            android:text="No pins saved yet.\nScheduled runs will fetch pins automatically."
-            android:textColor="@color/text_muted"
-            android:textSize="14sp"
-            android:visibility="gone" />
-    </FrameLayout>
 
 </LinearLayout>

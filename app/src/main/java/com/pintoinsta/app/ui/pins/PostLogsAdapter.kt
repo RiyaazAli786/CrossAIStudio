@@ -26,6 +26,8 @@ class PostLogsAdapter(
         notifyDataSetChanged()
     }
 
+    fun getCurrentLogs(): List<PostLog> = logs
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         val binding = ItemPostLogBinding.inflate(
             LayoutInflater.from(parent.context),

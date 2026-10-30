@@ -21,6 +21,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.pintoinsta.app.R
 import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.databinding.FragmentSettingsBinding
+import com.pintoinsta.app.util.PostingConfigManager
 import com.pintoinsta.app.util.ThemeManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -115,6 +116,22 @@ class SettingsFragment : Fragment() {
             showExportOptionsDialog()
         }
 
+        // Smart AI Captions switches
+        val ctx = requireContext()
+        binding.switchSmartCaptions.isChecked = PostingConfigManager.isSmartCaptionsEnabled(ctx)
+        binding.switchFirstComment.isChecked = PostingConfigManager.isFirstCommentHashtagsEnabled(ctx)
+        binding.switchCreditAttribution.isChecked = PostingConfigManager.isCreditAttributionEnabled(ctx)
+
+        binding.switchSmartCaptions.setOnCheckedChangeListener { _, isChecked ->
+            PostingConfigManager.setSmartCaptionsEnabled(requireContext(), isChecked)
+        }
+        binding.switchFirstComment.setOnCheckedChangeListener { _, isChecked ->
+            PostingConfigManager.setFirstCommentHashtagsEnabled(requireContext(), isChecked)
+        }
+        binding.switchCreditAttribution.setOnCheckedChangeListener { _, isChecked ->
+            PostingConfigManager.setCreditAttributionEnabled(requireContext(), isChecked)
+        }
+
         // Account Import button
         binding.btnImportAccounts.setOnClickListener {
             showImportOptionsDialog()
@@ -178,7 +195,7 @@ class SettingsFragment : Fragment() {
             val instaAccounts = repository.getAllInstagramAccounts()
             val keywords = repository.getAllKeywords()
             binding.tvAccountStats.text =
-                "Saved: ${pinAccounts.size} Pinterest • ${instaAccounts.size} Instagram • ${keywords.size} Keywords"
+                "Saved: ${pinAccounts.size} Pinterest â€¢ ${instaAccounts.size} Instagram â€¢ ${keywords.size} Keywords"
         }
     }
 

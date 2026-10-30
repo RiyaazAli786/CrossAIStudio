@@ -197,7 +197,8 @@ class InstagramClient(
     data class InstagramPostResponse(
         val success: Boolean,
         val message: String,
-        val postUrl: String? = null
+        val postUrl: String? = null,
+        val mediaId: String? = null
     )
 
     /**
@@ -389,20 +390,24 @@ class InstagramClient(
 
         return if (configRes.isSuccessful && configBody.contains("\"status\":\"ok\"")) {
             var postUrl: String? = null
+            var mediaId: String? = null
             try {
                 val json = JSONObject(configBody)
                 val media = json.optJSONObject("media")
                 val code = media?.optString("code")?.takeIf { it.isNotBlank() }
                     ?: json.optString("code").takeIf { it.isNotBlank() }
 
+                val pk = media?.optString("pk")?.takeIf { it.isNotBlank() }
+                    ?: media?.optString("id")?.takeIf { it.isNotBlank() }
+                    ?: json.optString("pk").takeIf { it.isNotBlank() }
+                    ?: json.optString("id").takeIf { it.isNotBlank() }
+
+                mediaId = pk
+
                 if (code != null) {
                     postUrl = "https://www.instagram.com/reel/$code/"
-                } else {
-                    val pk = media?.optString("pk")?.takeIf { it.isNotBlank() }
-                        ?: media?.optString("id")?.takeIf { it.isNotBlank() }
-                    if (pk != null) {
-                        postUrl = "https://www.instagram.com/p/$pk/"
-                    }
+                } else if (pk != null) {
+                    postUrl = "https://www.instagram.com/p/$pk/"
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed parsing post code from configure response", e)
@@ -417,7 +422,7 @@ class InstagramClient(
             } else {
                 "Successfully posted to Instagram! (UploadId: $uploadId)"
             }
-            InstagramPostResponse(true, msg, postUrl)
+            InstagramPostResponse(true, msg, postUrl, mediaId)
         } else {
             InstagramPostResponse(false, "Configure failed: $configBody")
         }
@@ -673,20 +678,24 @@ class InstagramClient(
 
         return if (configRes != null && configRes!!.isSuccessful && configBody.contains("\"status\":\"ok\"")) {
             var postUrl: String? = null
+            var mediaId: String? = null
             try {
                 val json = JSONObject(configBody)
                 val media = json.optJSONObject("media")
                 val code = media?.optString("code")?.takeIf { it.isNotBlank() }
                     ?: json.optString("code").takeIf { it.isNotBlank() }
 
+                val pk = media?.optString("pk")?.takeIf { it.isNotBlank() }
+                    ?: media?.optString("id")?.takeIf { it.isNotBlank() }
+                    ?: json.optString("pk").takeIf { it.isNotBlank() }
+                    ?: json.optString("id").takeIf { it.isNotBlank() }
+
+                mediaId = pk
+
                 if (code != null) {
                     postUrl = "https://www.instagram.com/reel/$code/"
-                } else {
-                    val pk = media?.optString("pk")?.takeIf { it.isNotBlank() }
-                        ?: media?.optString("id")?.takeIf { it.isNotBlank() }
-                    if (pk != null) {
-                        postUrl = "https://www.instagram.com/reel/$pk/"
-                    }
+                } else if (pk != null) {
+                    postUrl = "https://www.instagram.com/reel/$pk/"
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed parsing post code from video configure response", e)
@@ -701,9 +710,94 @@ class InstagramClient(
             } else {
                 "Successfully posted Reel to Instagram! (UploadId: $uploadId)"
             }
-            InstagramPostResponse(true, msg, postUrl)
+            InstagramPostResponse(true, msg, postUrl, mediaId)
         } else {
             InstagramPostResponse(false, "Video configure failed: $configBody")
+        }
+    }
+
+    /**
+     * Posts a comment to an Instagram media item (used for First-Comment hashtags).
+     */
+    fun postComment(
+        account: InstagramAccount,
+        mediaId: String,
+        commentText: String
+    ): Pair<Boolean, String> {
+        if (mediaId.isBlank() || commentText.isBlank()) {
+            return Pair(false, "Media ID or comment text is blank")
+        }
+
+        val csrf = account.csrfToken.ifEmpty { extractCsrfFromCookies(account.cookies) }
+        if (csrf.isEmpty()) {
+            return Pair(false, "Missing CSRF token in Instagram cookies")
+        }
+
+        val cleanComment = InstagramCaptionUtils.cleanAndFormatCaption(commentText)
+
+        // Attempt 1: Web AJAX comment endpoint
+        val webUrl = "https://www.instagram.com/api/v1/web/comments/$mediaId/add/"
+        val webForm = FormBody.Builder(Charsets.UTF_8)
+            .add("comment_text", cleanComment)
+            .build()
+
+        val webReq = Request.Builder()
+            .url(webUrl)
+            .post(webForm)
+            .header("Host", "www.instagram.com")
+            .header("User-Agent", DEFAULT_USER_AGENT)
+            .header("Origin", "https://www.instagram.com")
+            .header("Referer", "https://www.instagram.com/")
+            .header("X-Instagram-AJAX", "1")
+            .header("X-CSRFToken", csrf)
+            .header("X-IG-App-ID", IG_APP_ID)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Cookie", account.cookies)
+            .build()
+
+        try {
+            val res = client.newCall(webReq).execute()
+            val body = res.body?.string() ?: ""
+            res.close()
+            Log.d(TAG, "postComment (web) response HTTP ${res.code}: $body")
+            if (res.isSuccessful && body.contains("\"status\":\"ok\"")) {
+                return Pair(true, "First comment posted successfully")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "postComment web endpoint warning: ${e.message}")
+        }
+
+        // Attempt 2: Mobile REST API endpoint fallback
+        val mobileUrl = "https://i.instagram.com/api/v1/media/$mediaId/comment/"
+        val mobileForm = FormBody.Builder(Charsets.UTF_8)
+            .add("comment_text", cleanComment)
+            .add("media_id", mediaId)
+            .add("inventory_source", "media_view")
+            .build()
+
+        val mobileReq = Request.Builder()
+            .url(mobileUrl)
+            .post(mobileForm)
+            .header("Host", "i.instagram.com")
+            .header("User-Agent", DEFAULT_USER_AGENT)
+            .header("X-CSRFToken", csrf)
+            .header("X-IG-App-ID", IG_APP_ID)
+            .header("Cookie", account.cookies)
+            .build()
+
+        return try {
+            val res = client.newCall(mobileReq).execute()
+            val body = res.body?.string() ?: ""
+            res.close()
+            Log.d(TAG, "postComment (mobile) response HTTP ${res.code}: $body")
+            if (res.isSuccessful && body.contains("\"status\":\"ok\"")) {
+                Pair(true, "First comment posted successfully")
+            } else {
+                Pair(false, "Comment API returned: $body")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "postComment error", e)
+            Pair(false, "Comment exception: ${e.message}")
         }
     }
 

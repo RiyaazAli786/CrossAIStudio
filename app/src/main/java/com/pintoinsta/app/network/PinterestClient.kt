@@ -415,6 +415,103 @@ class PinterestClient(
         }
     }
 
+    /**
+     * Resolves a shared Pinterest URL (supports pin.it short links and standard pin links)
+     * and extracts complete pin metadata (title, mediaUrl, mediaType, description).
+     */
+    fun fetchPinDetailsByUrl(rawSharedText: String, accountId: Long = 0): SavedPin? {
+        return try {
+            val urlRegex = Regex("https?://[a-zA-Z0-9./_?=-]+")
+            val match = urlRegex.find(rawSharedText) ?: return null
+            var targetUrl = match.value
+
+            // Follow redirect if short link (e.g. pin.it)
+            val headReq = Request.Builder()
+                .url(targetUrl)
+                .header("User-Agent", DEFAULT_USER_AGENT)
+                .build()
+
+            val headRes = client.newCall(headReq).execute()
+            targetUrl = headRes.request.url.toString()
+            val responseHtml = headRes.body?.string() ?: ""
+            headRes.close()
+
+            // Extract pin ID from URL pattern: /pin/([0-9]+)
+            val pinIdRegex = Regex("/pin/([0-9]+)")
+            val pinIdMatch = pinIdRegex.find(targetUrl)
+            val pinId = pinIdMatch?.groupValues?.getOrNull(1)
+                ?: System.currentTimeMillis().toString()
+
+            var title = ""
+            var description = ""
+            var mediaUrl = ""
+            var mediaType = "IMAGE"
+
+            // Attempt 1: PinResource endpoint
+            try {
+                val resourceUrl = "https://www.pinterest.com/resource/PinResource/get/?data=%7B%22options%22%3A%7B%22id%22%3A%22$pinId%22%2C%22field_set_key%22%3A%22detailed%22%7D%7D"
+                val resReq = Request.Builder()
+                    .url(resourceUrl)
+                    .header("User-Agent", DEFAULT_USER_AGENT)
+                    .header("X-Requested-With", "XMLHttpRequest")
+                    .header("Accept", "application/json")
+                    .build()
+
+                val apiRes = client.newCall(resReq).execute()
+                if (apiRes.isSuccessful) {
+                    val body = apiRes.body?.string() ?: ""
+                    apiRes.close()
+                    val searchRes = parseSearchResponse("{\"resource_response\":${JSONObject(body).optJSONObject("resource_response") ?: "{}"}}", accountId, "shared")
+                    if (searchRes.pins.isNotEmpty()) {
+                        return searchRes.pins.first()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "PinResource lookup fallback: ${e.message}")
+            }
+
+            // Attempt 2: Extract from OpenGraph tags in page HTML
+            val ogTitleRegex = Regex("<meta\\s+(?:property|name)=[\"']og:title[\"']\\s+content=[\"'](.*?)[\"']", RegexOption.IGNORE_CASE)
+            val ogImageRegex = Regex("<meta\\s+(?:property|name)=[\"']og:image[\"']\\s+content=[\"'](.*?)[\"']", RegexOption.IGNORE_CASE)
+            val ogVideoRegex = Regex("<meta\\s+(?:property|name)=[\"']og:video[\"']\\s+content=[\"'](.*?)[\"']", RegexOption.IGNORE_CASE)
+            val ogDescRegex = Regex("<meta\\s+(?:property|name)=[\"']og:description[\"']\\s+content=[\"'](.*?)[\"']", RegexOption.IGNORE_CASE)
+
+            title = ogTitleRegex.find(responseHtml)?.groupValues?.getOrNull(1) ?: ""
+            description = ogDescRegex.find(responseHtml)?.groupValues?.getOrNull(1) ?: ""
+
+            val video = ogVideoRegex.find(responseHtml)?.groupValues?.getOrNull(1)
+            val image = ogImageRegex.find(responseHtml)?.groupValues?.getOrNull(1)
+
+            if (!video.isNullOrBlank()) {
+                mediaUrl = video
+                mediaType = "VIDEO"
+            } else if (!image.isNullOrBlank()) {
+                mediaUrl = image
+                mediaType = "IMAGE"
+            }
+
+            if (mediaUrl.isNotBlank()) {
+                SavedPin(
+                    pinId = pinId,
+                    pinterestAccountId = accountId,
+                    searchTerm = "Shared Pin",
+                    title = InstagramCaptionUtils.cleanAndFormatCaption(title),
+                    description = InstagramCaptionUtils.cleanAndFormatCaption(description),
+                    mediaUrl = mediaUrl,
+                    mediaType = mediaType,
+                    isPosted = false,
+                    postedAt = null,
+                    rawJson = "{}"
+                )
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching pin details by URL", e)
+            null
+        }
+    }
+
     private fun extractCsrfFromCookies(cookies: String): String {
         val parts = cookies.split(";")
         for (part in parts) {

@@ -13,6 +13,8 @@ import com.pintoinsta.app.network.InstagramClient
 import com.pintoinsta.app.network.PinterestClient
 import com.pintoinsta.app.notification.NotificationHelper
 import com.pintoinsta.app.util.InstagramCaptionUtils
+import com.pintoinsta.app.util.PostingConfigManager
+import com.pintoinsta.app.util.SmartCaptionEngine
 import com.pintoinsta.app.util.VideoMuxerUtils
 import com.pintoinsta.app.util.CookieUtils
 import com.pintoinsta.app.util.NetworkUtils
@@ -580,8 +582,19 @@ class AppRepository(private val context: Context) {
             return@withContext Pair(false, err)
         }
 
-        val rawCaption = if (pin.title.isNotBlank()) pin.title else pin.description.ifEmpty { pin.searchTerm }
-        val caption = InstagramCaptionUtils.cleanAndFormatCaption(rawCaption)
+        val isSmart = PostingConfigManager.isSmartCaptionsEnabled(context)
+        val isFirstComment = PostingConfigManager.isFirstCommentHashtagsEnabled(context)
+        val isCredit = PostingConfigManager.isCreditAttributionEnabled(context)
+
+        val preparedCaption = SmartCaptionEngine.buildCaption(
+            rawTitle = pin.title,
+            description = pin.description,
+            searchTerm = pin.searchTerm,
+            isSmartCaptionEnabled = isSmart,
+            isFirstCommentEnabled = isFirstComment,
+            isCreditAttributionEnabled = isCredit
+        )
+        val caption = preparedCaption.mainCaption
         Log.d(TAG, "Posting pin ${pin.pinId} to @${instaAccount.username} with caption: '$caption'")
 
         // Push notification & activity log: Post started
@@ -701,6 +714,28 @@ class AppRepository(private val context: Context) {
                     postUrl = postUrl
                 )
             )
+
+            // Auto First-Comment with targeted hashtags
+            val firstCommentText = preparedCaption.firstComment
+            val mediaId = postResult.mediaId
+            if (!firstCommentText.isNullOrBlank() && !mediaId.isNullOrBlank()) {
+                Log.d(TAG, "Posting first comment with hashtags on media $mediaId to @$targetUser...")
+                delay(1500L) // Brief pause to ensure media indexing on Instagram servers
+                val commentRes = instagramClient.postComment(instaAccount, mediaId, firstCommentText)
+                if (commentRes.first) {
+                    dbHelper.insertPostLog(
+                        PostLog(
+                            pinId = pin.pinId,
+                            instagramAccountId = instaAccountId,
+                            status = "SUCCESS",
+                            message = "First comment with ${preparedCaption.hashtagsUsed.size} hashtags posted to @$targetUser",
+                            postUrl = postUrl
+                        )
+                    )
+                } else {
+                    Log.w(TAG, "First comment posting warning: ${commentRes.second}")
+                }
+            }
 
             // Push notification: Post succeeded with post URL
             notificationHelper.notifyPostSuccess(
@@ -1405,6 +1440,35 @@ class AppRepository(private val context: Context) {
                 keywordsImported = 0,
                 message = "Failed to parse JSON: ${e.message}"
             )
+        }
+    }
+
+    /**
+     * Resolves and imports a shared Pinterest pin URL directly into the local Pin Vault.
+     */
+    suspend fun importPinFromSharedText(sharedText: String, targetAccountId: Long? = null): Pair<Boolean, SavedPin?> = withContext(Dispatchers.IO) {
+        try {
+            val accountId = targetAccountId ?: dbHelper.getAllPinterestAccounts().firstOrNull()?.id ?: 0L
+            val pin = pinterestClient.fetchPinDetailsByUrl(sharedText, accountId)
+            if (pin != null) {
+                val inserted = dbHelper.insertSavedPin(pin)
+                if (inserted > 0L) {
+                    dbHelper.insertPostLog(
+                        PostLog(
+                            pinId = pin.pinId,
+                            instagramAccountId = null,
+                            status = "INFO",
+                            message = "Captured pin '${pin.title.take(30)}' via Android Share into Pin Vault"
+                        )
+                    )
+                }
+                Pair(true, pin)
+            } else {
+                Pair(false, null)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed importing shared pin", e)
+            Pair(false, null)
         }
     }
 }

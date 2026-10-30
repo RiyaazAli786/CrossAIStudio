@@ -11,11 +11,16 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import android.widget.Toast
+import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.databinding.ActivityMainBinding
 import com.pintoinsta.app.service.CrossAIPostingService
 import com.pintoinsta.app.ui.analytics.AnalyticsFragment
@@ -69,6 +74,8 @@ class MainActivity : AppCompatActivity() {
         if (savedInstanceState == null) {
             switchFragment(pinterestFragment)
         }
+
+        handleIncomingShareIntent(intent)
     }
 
     private fun setupBottomNav() {
@@ -129,6 +136,51 @@ class MainActivity : AppCompatActivity() {
                     startActivity(intent)
                 } catch (e: Exception) {
                     // Fallback to general settings
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingShareIntent(intent)
+    }
+
+    private fun handleIncomingShareIntent(incomingIntent: Intent?) {
+        if (incomingIntent?.action != Intent.ACTION_SEND) return
+
+        val sharedText = incomingIntent.getStringExtra(Intent.EXTRA_TEXT)
+        if (!sharedText.isNullOrBlank()) {
+            val repository = AppRepository.getInstance(this)
+            val progress = AlertDialog.Builder(this)
+                .setTitle("Importing Pinterest Pin")
+                .setMessage("Extracting media and metadata from shared link...")
+                .setCancelable(false)
+                .create()
+            progress.show()
+
+            lifecycleScope.launch {
+                val (success, pin) = repository.importPinFromSharedText(sharedText)
+                progress.dismiss()
+
+                if (success && pin != null) {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("📌 Pin Imported Successfully!")
+                        .setMessage("Title: ${pin.title.ifEmpty { "Shared Pin" }}\nMedia: ${pin.mediaType}\n\nWould you like to post this directly to Instagram now or keep it in your Pin Vault?")
+                        .setPositiveButton("Post Now") { _, _ ->
+                            lifecycleScope.launch {
+                                Toast.makeText(this@MainActivity, "Publishing Pin to Instagram...", Toast.LENGTH_SHORT).show()
+                                val (_, msg) = repository.postSinglePin(pin)
+                                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                        .setNegativeButton("Keep in Vault") { _, _ ->
+                            binding.bottomNav.selectedItemId = R.id.nav_pins
+                        }
+                        .show()
+                } else {
+                    Toast.makeText(this@MainActivity, "Could not extract Pinterest pin from shared text.", Toast.LENGTH_LONG).show()
                 }
             }
         }

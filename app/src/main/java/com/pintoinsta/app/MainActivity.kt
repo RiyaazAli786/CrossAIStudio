@@ -148,20 +148,50 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleIncomingShareIntent(incomingIntent: Intent?) {
-        if (incomingIntent?.action != Intent.ACTION_SEND) return
+        if (incomingIntent == null) return
+        val action = incomingIntent.action
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_VIEW) return
 
-        val sharedText = incomingIntent.getStringExtra(Intent.EXTRA_TEXT)
-        if (!sharedText.isNullOrBlank()) {
-            val repository = AppRepository.getInstance(this)
-            val progress = AlertDialog.Builder(this)
-                .setTitle("Importing Pinterest Pin")
-                .setMessage("Extracting media and metadata from shared link...")
-                .setCancelable(false)
-                .create()
-            progress.show()
+        var sharedText = incomingIntent.getStringExtra(Intent.EXTRA_TEXT)
+        if (sharedText.isNullOrBlank()) {
+            sharedText = incomingIntent.getStringExtra(Intent.EXTRA_SUBJECT)
+        }
+        if (sharedText.isNullOrBlank() && incomingIntent.data != null) {
+            sharedText = incomingIntent.dataString
+        }
+        if (sharedText.isNullOrBlank() && incomingIntent.clipData != null && incomingIntent.clipData!!.itemCount > 0) {
+            val item = incomingIntent.clipData!!.getItemAt(0)
+            sharedText = item.text?.toString() ?: item.uri?.toString()
+        }
 
-            lifecycleScope.launch {
-                val (success, pin) = repository.importPinFromSharedText(sharedText)
+        val streamUri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            incomingIntent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            incomingIntent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+
+        if (sharedText.isNullOrBlank() && streamUri == null) {
+            return
+        }
+
+        val repository = AppRepository.getInstance(this)
+        val progress = AlertDialog.Builder(this)
+            .setTitle("Importing Shared Content")
+            .setMessage("Extracting media and metadata from Pinterest...")
+            .setCancelable(false)
+            .create()
+        progress.show()
+
+        lifecycleScope.launch {
+            try {
+                val (success, pin) = if (!sharedText.isNullOrBlank()) {
+                    repository.importPinFromSharedText(sharedText)
+                } else if (streamUri != null) {
+                    repository.importPinFromDirectImageUri(streamUri)
+                } else {
+                    Pair(false, null)
+                }
                 progress.dismiss()
 
                 if (success && pin != null) {
@@ -180,8 +210,16 @@ class MainActivity : AppCompatActivity() {
                         }
                         .show()
                 } else {
-                    Toast.makeText(this@MainActivity, "Could not extract Pinterest pin from shared text.", Toast.LENGTH_LONG).show()
+                    val rawDisplay = sharedText ?: streamUri.toString()
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Pin Extraction Failed")
+                        .setMessage("Could not extract Pinterest pin from shared text:\n\n\"$rawDisplay\"\n\nPlease ensure the link is a valid Pinterest pin or try copying the pin URL directly.")
+                        .setPositiveButton("OK", null)
+                        .show()
                 }
+            } catch (e: Exception) {
+                progress.dismiss()
+                Toast.makeText(this@MainActivity, "Import error: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }

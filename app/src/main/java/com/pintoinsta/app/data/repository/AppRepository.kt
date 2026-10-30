@@ -1,6 +1,7 @@
 package com.pintoinsta.app.data.repository
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import com.pintoinsta.app.data.db.AppDatabaseHelper
 import com.pintoinsta.app.data.model.InstagramAccount
@@ -1468,6 +1469,52 @@ class AppRepository(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed importing shared pin", e)
+            Pair(false, null)
+        }
+    }
+
+    /**
+     * Imports a direct image URI (e.g. shared via Android share sheet) into local cache and Pin Vault.
+     */
+    suspend fun importPinFromDirectImageUri(imageUri: Uri): Pair<Boolean, SavedPin?> = withContext(Dispatchers.IO) {
+        try {
+            val pinId = System.currentTimeMillis().toString()
+            val inputStream = context.contentResolver.openInputStream(imageUri) ?: return@withContext Pair(false, null)
+            val cacheFile = File(context.cacheDir, "shared_pin_${pinId}.jpg")
+            cacheFile.outputStream().use { out ->
+                inputStream.copyTo(out)
+            }
+            inputStream.close()
+
+            val accountId = dbHelper.getAllPinterestAccounts().firstOrNull()?.id ?: 0L
+            val pin = SavedPin(
+                pinId = pinId,
+                pinterestAccountId = accountId,
+                searchTerm = "Shared Image",
+                title = "Shared Pin",
+                description = "",
+                mediaUrl = "file://${cacheFile.absolutePath}",
+                mediaType = "IMAGE",
+                isPosted = false,
+                postedAt = null,
+                rawJson = "{}"
+            )
+            val inserted = dbHelper.insertSavedPin(pin)
+            if (inserted > 0L) {
+                dbHelper.insertPostLog(
+                    PostLog(
+                        pinId = pinId,
+                        instagramAccountId = null,
+                        status = "INFO",
+                        message = "Imported shared image into Pin Vault"
+                    )
+                )
+                Pair(true, pin)
+            } else {
+                Pair(false, null)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed importing shared image URI", e)
             Pair(false, null)
         }
     }

@@ -13,6 +13,7 @@ import com.pintoinsta.app.util.InstagramCaptionUtils
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -97,6 +98,11 @@ class InstagramClient(
      */
     fun downloadMedia(url: String): ByteArray? {
         return try {
+            if (url.startsWith("file://")) {
+                val f = File(url.removePrefix("file://"))
+                return if (f.exists()) f.readBytes() else null
+            }
+
             val request = Request.Builder()
                 .url(url)
                 .get()

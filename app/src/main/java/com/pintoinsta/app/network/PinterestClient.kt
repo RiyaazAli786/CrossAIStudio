@@ -416,100 +416,192 @@ class PinterestClient(
     }
 
     /**
-     * Resolves a shared Pinterest URL (supports pin.it short links and standard pin links)
+     * Resolves a shared Pinterest URL (supports pin.it short links, direct pin links, and video pins)
      * and extracts complete pin metadata (title, mediaUrl, mediaType, description).
      */
     fun fetchPinDetailsByUrl(rawSharedText: String, accountId: Long = 0): SavedPin? {
         return try {
-            val urlRegex = Regex("https?://[a-zA-Z0-9./_?=-]+")
-            val match = urlRegex.find(rawSharedText) ?: return null
-            var targetUrl = match.value
+            val trimmedText = rawSharedText.trim()
+            Log.d(TAG, "Resolving pin details from text: $trimmedText")
 
-            // Follow redirect if short link (e.g. pin.it)
-            val headReq = Request.Builder()
-                .url(targetUrl)
+            // 1. Extract URL or direct numeric pin ID
+            val urlRegex = Regex("https?://[^\\s\"'<>]+")
+            val urlMatch = urlRegex.find(trimmedText)
+            var inputUrl = urlMatch?.value
+
+            var pinId: String? = null
+
+            if (inputUrl == null) {
+                // Check if user shared direct numeric Pin ID (e.g. 18-digit ID)
+                val numericPinMatch = Regex("\\b[0-9]{15,20}\\b").find(trimmedText)
+                if (numericPinMatch != null) {
+                    pinId = numericPinMatch.value
+                } else {
+                    Log.w(TAG, "No valid URL or Pin ID found in text: $trimmedText")
+                    return null
+                }
+            }
+
+            // 2. Resolve short links (e.g. pin.it) or extract pinId from URL
+            if (pinId == null && inputUrl != null) {
+                val directPinMatch = Regex("/pin/([0-9]+)").find(inputUrl)
+                if (directPinMatch != null) {
+                    pinId = directPinMatch.groupValues[1]
+                } else {
+                    // Follow redirects to get real pin URL
+                    val req = Request.Builder()
+                        .url(inputUrl)
+                        .header("User-Agent", DEFAULT_USER_AGENT)
+                        .build()
+
+                    val res = client.newCall(req).execute()
+                    val redirectedUrl = res.request.url.toString()
+                    val resBody = res.body?.string() ?: ""
+                    res.close()
+
+                    Log.d(TAG, "Shortlink redirected to: $redirectedUrl")
+                    val matchInRedirect = Regex("/pin/([0-9]+)").find(redirectedUrl)
+                    pinId = matchInRedirect?.groupValues?.getOrNull(1)
+
+                    if (pinId == null) {
+                        val canonicalMatch = Regex("/pin/([0-9]+)").find(resBody)
+                        pinId = canonicalMatch?.groupValues?.getOrNull(1)
+                    }
+                }
+            }
+
+            if (pinId == null) {
+                Log.w(TAG, "Could not determine Pin ID from: $rawSharedText")
+                return null
+            }
+
+            Log.d(TAG, "Identified Pinterest Pin ID: $pinId. Fetching canonical pin details...")
+
+            // 3. Always fetch canonical desktop pin page: https://www.pinterest.com/pin/$pinId/
+            val canonicalUrl = "https://www.pinterest.com/pin/$pinId/"
+            val pageReq = Request.Builder()
+                .url(canonicalUrl)
                 .header("User-Agent", DEFAULT_USER_AGENT)
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("Referer", "https://www.pinterest.com/")
                 .build()
 
-            val headRes = client.newCall(headReq).execute()
-            targetUrl = headRes.request.url.toString()
-            val responseHtml = headRes.body?.string() ?: ""
-            headRes.close()
+            val pageRes = client.newCall(pageReq).execute()
+            val html = pageRes.body?.string() ?: ""
+            pageRes.close()
 
-            // Extract pin ID from URL pattern: /pin/([0-9]+)
-            val pinIdRegex = Regex("/pin/([0-9]+)")
-            val pinIdMatch = pinIdRegex.find(targetUrl)
-            val pinId = pinIdMatch?.groupValues?.getOrNull(1)
-                ?: System.currentTimeMillis().toString()
+            if (html.isBlank()) {
+                Log.w(TAG, "Pinterest returned empty HTML for pin $pinId")
+                return null
+            }
 
-            var title = ""
-            var description = ""
+            // 4. Extract Title
+            var title = extractMetaTagContent(html, "og:title")
+                ?: extractMetaTagContent(html, "twitter:title")
+                ?: ""
+
+            if (title.isBlank()) {
+                val titleTagMatch = Regex("<title>(.*?)</title>", RegexOption.IGNORE_CASE).find(html)
+                title = titleTagMatch?.groupValues?.getOrNull(1) ?: ""
+            }
+
+            // Clean title
+            title = title.replace(Regex("\\s*\\|\\s*Pinterest.*", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("\\[Video\\]", RegexOption.IGNORE_CASE), "")
+                .trim()
+
+            // 5. Extract Description
+            val description = extractMetaTagContent(html, "og:description")
+                ?: extractMetaTagContent(html, "description")
+                ?: extractMetaTagContent(html, "twitter:description")
+                ?: ""
+
+            // 6. Extract Media: Check Video First
             var mediaUrl = ""
             var mediaType = "IMAGE"
 
-            // Attempt 1: PinResource endpoint
-            try {
-                val resourceUrl = "https://www.pinterest.com/resource/PinResource/get/?data=%7B%22options%22%3A%7B%22id%22%3A%22$pinId%22%2C%22field_set_key%22%3A%22detailed%22%7D%7D"
-                val resReq = Request.Builder()
-                    .url(resourceUrl)
-                    .header("User-Agent", DEFAULT_USER_AGENT)
-                    .header("X-Requested-With", "XMLHttpRequest")
-                    .header("Accept", "application/json")
-                    .build()
+            // Look for high-res direct MP4 in page HTML
+            val mp4Regex = Regex("https?://[^\\s\"']+(?:v1\\.pinimg\\.com/videos[^\\s\"']+\\.mp4|[a-zA-Z0-9/_.-]+\\.mp4)")
+            val mp4Match = mp4Regex.find(html)
 
-                val apiRes = client.newCall(resReq).execute()
-                if (apiRes.isSuccessful) {
-                    val body = apiRes.body?.string() ?: ""
-                    apiRes.close()
-                    val searchRes = parseSearchResponse("{\"resource_response\":${JSONObject(body).optJSONObject("resource_response") ?: "{}"}}", accountId, "shared")
-                    if (searchRes.pins.isNotEmpty()) {
-                        return searchRes.pins.first()
+            if (mp4Match != null) {
+                mediaUrl = mp4Match.value
+                mediaType = "VIDEO"
+                Log.d(TAG, "Extracted direct video MP4 URL: $mediaUrl")
+            } else {
+                // Check HLS .m3u8 if no direct mp4 found
+                val hlsRegex = Regex("https?://[^\\s\"']+(?:v1\\.pinimg\\.com/videos[^\\s\"']+\\.m3u8|[a-zA-Z0-9/_.-]+\\.m3u8)")
+                val hlsMatch = hlsRegex.find(html)
+                if (hlsMatch != null) {
+                    mediaUrl = hlsMatch.value
+                    mediaType = "VIDEO"
+                    Log.d(TAG, "Extracted video HLS stream URL: $mediaUrl")
+                }
+            }
+
+            // If not video, extract highest-resolution Image
+            if (mediaUrl.isEmpty()) {
+                val ogImage = extractMetaTagContent(html, "og:image")
+                    ?: extractMetaTagContent(html, "twitter:image:src")
+                    ?: extractMetaTagContent(html, "twitter:image")
+
+                if (!ogImage.isNullOrBlank()) {
+                    // Upgrade 736x or 474x to full original quality
+                    mediaUrl = if (ogImage.contains("/736x/")) {
+                        ogImage.replace("/736x/", "/originals/")
+                    } else if (ogImage.contains("/474x/")) {
+                        ogImage.replace("/474x/", "/originals/")
+                    } else {
+                        ogImage
+                    }
+                    mediaType = "IMAGE"
+                } else {
+                    // Fallback search for i.pinimg.com image URL inside HTML
+                    val pinImgRegex = Regex("https?://i\\.pinimg\\.com/(?:originals|736x|564x|474x)/[a-zA-Z0-9/_.-]+\\.(?:jpg|png|webp)")
+                    val pinImgMatch = pinImgRegex.find(html)
+                    if (pinImgMatch != null) {
+                        mediaUrl = pinImgMatch.value
+                        mediaType = "IMAGE"
                     }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "PinResource lookup fallback: ${e.message}")
             }
 
-            // Attempt 2: Extract from OpenGraph tags in page HTML
-            val ogTitleRegex = Regex("<meta\\s+(?:property|name)=[\"']og:title[\"']\\s+content=[\"'](.*?)[\"']", RegexOption.IGNORE_CASE)
-            val ogImageRegex = Regex("<meta\\s+(?:property|name)=[\"']og:image[\"']\\s+content=[\"'](.*?)[\"']", RegexOption.IGNORE_CASE)
-            val ogVideoRegex = Regex("<meta\\s+(?:property|name)=[\"']og:video[\"']\\s+content=[\"'](.*?)[\"']", RegexOption.IGNORE_CASE)
-            val ogDescRegex = Regex("<meta\\s+(?:property|name)=[\"']og:description[\"']\\s+content=[\"'](.*?)[\"']", RegexOption.IGNORE_CASE)
-
-            title = ogTitleRegex.find(responseHtml)?.groupValues?.getOrNull(1) ?: ""
-            description = ogDescRegex.find(responseHtml)?.groupValues?.getOrNull(1) ?: ""
-
-            val video = ogVideoRegex.find(responseHtml)?.groupValues?.getOrNull(1)
-            val image = ogImageRegex.find(responseHtml)?.groupValues?.getOrNull(1)
-
-            if (!video.isNullOrBlank()) {
-                mediaUrl = video
-                mediaType = "VIDEO"
-            } else if (!image.isNullOrBlank()) {
-                mediaUrl = image
-                mediaType = "IMAGE"
+            if (mediaUrl.isBlank()) {
+                Log.e(TAG, "Failed to extract valid media URL for Pin $pinId")
+                return null
             }
 
-            if (mediaUrl.isNotBlank()) {
-                SavedPin(
-                    pinId = pinId,
-                    pinterestAccountId = accountId,
-                    searchTerm = "Shared Pin",
-                    title = InstagramCaptionUtils.cleanAndFormatCaption(title),
-                    description = InstagramCaptionUtils.cleanAndFormatCaption(description),
-                    mediaUrl = mediaUrl,
-                    mediaType = mediaType,
-                    isPosted = false,
-                    postedAt = null,
-                    rawJson = "{}"
-                )
-            } else {
-                null
-            }
+            Log.d(TAG, "Successfully extracted Pin $pinId: title='$title', type=$mediaType, mediaUrl=$mediaUrl")
+
+            SavedPin(
+                pinId = pinId,
+                pinterestAccountId = accountId,
+                searchTerm = "Shared Pin",
+                title = InstagramCaptionUtils.cleanAndFormatCaption(title),
+                description = InstagramCaptionUtils.cleanAndFormatCaption(description),
+                mediaUrl = mediaUrl,
+                mediaType = mediaType,
+                isPosted = false,
+                postedAt = null,
+                rawJson = "{}"
+            )
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching pin details by URL", e)
+            Log.e(TAG, "Error in fetchPinDetailsByUrl for '$rawSharedText'", e)
             null
         }
+    }
+
+    /**
+     * Extracts content attribute from a meta tag regardless of attribute ordering.
+     */
+    private fun extractMetaTagContent(html: String, metaName: String): String? {
+        val pattern = Regex(
+            "<meta\\b(?=[^>]*\\b(?:property|name)=['\"]" + Regex.escape(metaName) + "['\"])(?=[^>]*\\bcontent=['\"](?<content>[^'\"]*)['\"])[^>]*>",
+            RegexOption.IGNORE_CASE
+        )
+        val match = pattern.find(html)
+        return match?.groups?.get("content")?.value?.trim()?.ifEmpty { null }
     }
 
     private fun extractCsrfFromCookies(cookies: String): String {

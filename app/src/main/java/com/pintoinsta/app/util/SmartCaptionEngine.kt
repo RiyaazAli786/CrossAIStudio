@@ -241,3 +241,4 @@ object SmartCaptionEngine {
         return selectedTags.filter { it.startsWith("#") && it.length > 2 }.take(25)
     }
 }
+

@@ -42,3 +42,4 @@ object PostingConfigManager {
         getPrefs(context).edit().putBoolean(KEY_CREDIT_ATTRIBUTION, enabled).apply()
     }
 }
+

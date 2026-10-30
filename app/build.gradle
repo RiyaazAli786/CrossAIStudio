@@ -39,7 +39,8 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.release
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
@@ -90,4 +91,7 @@ dependencies {
 
     // AndroidX WebKit for advanced WebView features and header management
     implementation 'androidx.webkit:webkit:1.12.0'
+
+    // AndroidX Biometric for Fingerprint / PIN / Face unlock security
+    implementation 'androidx.biometric:biometric:1.1.0'
 }

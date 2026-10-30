@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.util.Log
 import com.pintoinsta.app.data.model.AccountAnalytics
 import com.pintoinsta.app.data.model.DailyAnalytics
 import com.pintoinsta.app.data.model.InstagramAccount
@@ -20,6 +21,7 @@ import java.util.Locale
 class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
     companion object {
+        private const val TAG = "AppDatabaseHelper"
         const val DATABASE_NAME = "pintoinsta.db"
         const val DATABASE_VERSION = 1
 
@@ -164,12 +166,45 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_POST_LOGS")
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_SAVED_PINS")
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_SEARCH_KEYWORDS")
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_INSTAGRAM_ACCOUNTS")
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_PINTEREST_ACCOUNTS")
-        onCreate(db)
+        Log.i(TAG, "Upgrading database from version $oldVersion to $newVersion safely without data loss")
+        // Step 1: Ensure all required tables exist non-destructively
+        db.execSQL("CREATE TABLE IF NOT EXISTS $TABLE_PINTEREST_ACCOUNTS (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, full_name TEXT, profile_pic_url TEXT, cookies TEXT, csrf_token TEXT, status TEXT, linked_instagram_account_id INTEGER, linked_instagram_account_ids TEXT, schedule_interval_hours INTEGER, is_auto_post_enabled INTEGER, next_run_time INTEGER, last_run_time INTEGER, last_run_status TEXT, last_checked_time INTEGER, daily_post_times TEXT)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS $TABLE_INSTAGRAM_ACCOUNTS (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, display_name TEXT, profile_pic_url TEXT, cookies TEXT, csrf_token TEXT, ds_user_id TEXT, status TEXT, last_checked_time INTEGER)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS $TABLE_SEARCH_KEYWORDS (id INTEGER PRIMARY KEY AUTOINCREMENT, keyword TEXT UNIQUE, created_at INTEGER)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS $TABLE_SAVED_PINS (pin_id TEXT PRIMARY KEY, pinterest_account_id INTEGER, search_term TEXT, title TEXT, description TEXT, media_url TEXT, media_type TEXT, is_posted INTEGER, posted_at INTEGER, instagram_account_id INTEGER, created_at INTEGER, raw_json TEXT, post_url TEXT, published_to TEXT)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS $TABLE_POST_LOGS (id INTEGER PRIMARY KEY AUTOINCREMENT, pin_id TEXT, instagram_account_id INTEGER, status TEXT, message TEXT, timestamp INTEGER, post_url TEXT)")
+
+        // Helper to safely add column if missing
+        fun addColumnIfNotExists(table: String, column: String, typeDef: String) {
+            try {
+                val cursor = db.rawQuery("PRAGMA table_info($table)", null)
+                var exists = false
+                cursor.use { c ->
+                    val nameIdx = c.getColumnIndex("name")
+                    while (c.moveToNext()) {
+                        if (nameIdx != -1 && c.getString(nameIdx).equals(column, ignoreCase = true)) {
+                            exists = true
+                            break
+                        }
+                    }
+                }
+                if (!exists) {
+                    db.execSQL("ALTER TABLE $table ADD COLUMN $column $typeDef")
+                    Log.i(TAG, "Added missing column $column to $table safely")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Safe migration notice for $table.$column: ${e.message}")
+            }
+        }
+
+        // Step 2: Incrementally add any newly introduced columns without wiping data
+        addColumnIfNotExists(TABLE_PINTEREST_ACCOUNTS, "linked_instagram_account_ids", "TEXT DEFAULT ''")
+        addColumnIfNotExists(TABLE_PINTEREST_ACCOUNTS, "next_run_time", "INTEGER DEFAULT 0")
+        addColumnIfNotExists(TABLE_PINTEREST_ACCOUNTS, "last_run_time", "INTEGER")
+        addColumnIfNotExists(TABLE_PINTEREST_ACCOUNTS, "last_run_message", "TEXT DEFAULT ''")
+        addColumnIfNotExists(TABLE_SAVED_PINS, "post_url", "TEXT")
+        addColumnIfNotExists(TABLE_SAVED_PINS, "published_to", "TEXT")
+        addColumnIfNotExists(TABLE_POST_LOGS, "post_url", "TEXT")
     }
 
     fun getLastPostTimeForInstagramAccount(instagramAccountId: Long): Long {

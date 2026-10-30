@@ -13,6 +13,7 @@ object PostingConfigManager {
     private const val KEY_SMART_CAPTIONS = "key_smart_captions"
     private const val KEY_FIRST_COMMENT_HASHTAGS = "key_first_comment_hashtags"
     private const val KEY_CREDIT_ATTRIBUTION = "key_credit_attribution"
+    private const val KEY_BIOMETRIC_LOCK = "key_biometric_lock"
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -40,6 +41,14 @@ object PostingConfigManager {
 
     fun setCreditAttributionEnabled(context: Context, enabled: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_CREDIT_ATTRIBUTION, enabled).apply()
+    }
+
+    fun isBiometricLockEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_BIOMETRIC_LOCK, false)
+    }
+
+    fun setBiometricLockEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_BIOMETRIC_LOCK, enabled).apply()
     }
 }
 

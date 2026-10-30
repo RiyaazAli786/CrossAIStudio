@@ -121,6 +121,7 @@ class SettingsFragment : Fragment() {
         binding.switchSmartCaptions.isChecked = PostingConfigManager.isSmartCaptionsEnabled(ctx)
         binding.switchFirstComment.isChecked = PostingConfigManager.isFirstCommentHashtagsEnabled(ctx)
         binding.switchCreditAttribution.isChecked = PostingConfigManager.isCreditAttributionEnabled(ctx)
+        binding.switchBiometricLock.isChecked = PostingConfigManager.isBiometricLockEnabled(ctx)
 
         binding.switchSmartCaptions.setOnCheckedChangeListener { _, isChecked ->
             PostingConfigManager.setSmartCaptionsEnabled(requireContext(), isChecked)
@@ -130,6 +131,11 @@ class SettingsFragment : Fragment() {
         }
         binding.switchCreditAttribution.setOnCheckedChangeListener { _, isChecked ->
             PostingConfigManager.setCreditAttributionEnabled(requireContext(), isChecked)
+        }
+        binding.switchBiometricLock.setOnCheckedChangeListener { _, isChecked ->
+            PostingConfigManager.setBiometricLockEnabled(requireContext(), isChecked)
+            val msg = if (isChecked) "Biometric / Screen Lock enabled" else "Biometric / Screen Lock disabled"
+            Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
         }
 
         // Account Import button

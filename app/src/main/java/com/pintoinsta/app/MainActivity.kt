@@ -19,8 +19,12 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import android.view.View
 import android.widget.Toast
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
 import com.pintoinsta.app.data.repository.AppRepository
+import com.pintoinsta.app.util.PostingConfigManager
 import com.pintoinsta.app.databinding.ActivityMainBinding
 import com.pintoinsta.app.service.CrossAIPostingService
 import com.pintoinsta.app.ui.analytics.AnalyticsFragment
@@ -40,6 +44,8 @@ class MainActivity : AppCompatActivity() {
     private val pinsLogsFragment = PinsLogsFragment()
     private val analyticsFragment = AnalyticsFragment()
     private val settingsFragment = SettingsFragment()
+
+    private var isAuthenticatedThisSession = false
 
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
@@ -75,7 +81,79 @@ class MainActivity : AppCompatActivity() {
             switchFragment(pinterestFragment)
         }
 
+        binding.btnUnlockApp.setOnClickListener {
+            showBiometricPrompt()
+        }
+
         handleIncomingShareIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        checkBiometricSecurity()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Lock app when minimized if biometric lock is active
+        if (PostingConfigManager.isBiometricLockEnabled(this)) {
+            isAuthenticatedThisSession = false
+        }
+    }
+
+    private fun checkBiometricSecurity() {
+        if (!PostingConfigManager.isBiometricLockEnabled(this)) {
+            binding.layoutLockOverlay.visibility = View.GONE
+            return
+        }
+
+        if (!isAuthenticatedThisSession) {
+            binding.layoutLockOverlay.visibility = View.VISIBLE
+            showBiometricPrompt()
+        } else {
+            binding.layoutLockOverlay.visibility = View.GONE
+        }
+    }
+
+    private fun showBiometricPrompt() {
+        try {
+            val executor = ContextCompat.getMainExecutor(this)
+            val biometricPrompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    isAuthenticatedThisSession = true
+                    binding.layoutLockOverlay.visibility = View.GONE
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    super.onAuthenticationError(errorCode, errString)
+                    if (errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
+                        errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
+                        errorCode == BiometricPrompt.ERROR_CANCELED
+                    ) {
+                        // User dismissed lock; remain on lock overlay
+                        binding.layoutLockOverlay.visibility = View.VISIBLE
+                    }
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                }
+            })
+
+            val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                .setTitle("CrossAIStudio Locked")
+                .setSubtitle("Authenticate with Biometrics or Device PIN")
+                .setAllowedAuthenticators(
+                    BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                )
+                .build()
+
+            biometricPrompt.authenticate(promptInfo)
+        } catch (e: Exception) {
+            // Fallback if device has no biometric or credential set
+            binding.layoutLockOverlay.visibility = View.GONE
+        }
     }
 
     private fun setupBottomNav() {

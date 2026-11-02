@@ -9,20 +9,20 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version Name (e.g., 1.0.1)'
+        description: 'Custom Version Name (e.g., 1.1.0). Leave empty to auto-increment.'
         required: false
         default: ''
       changelog:
         description: 'Release Notes / Changelog'
         required: false
-        default: 'Automated release with performance enhancements and bug fixes'
+        default: ''
 
 permissions:
   contents: write
 
 jobs:
   build-and-release:
-    name: Build Signed Release APK & Publish
+    name: Auto Increment Version, Build & Release APK
     runs-on: ubuntu-latest
 
     steps:
@@ -30,6 +30,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -37,40 +38,107 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
       - name: Grant Execute Permission to Gradlew
         run: chmod +x gradlew
 
-      - name: Extract Release Version & Notes
+      - name: Compute & Auto-Increment Version
         id: release_info
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_CHANGELOG: ${{ github.event.inputs.changelog }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            VERSION_NAME="${{ github.event.inputs.version }}"
-          else
-            VERSION_NAME=$(node -p "require('./version.json').versionName" 2>/dev/null || echo "${GITHUB_REF_NAME#v}")
-          fi
-          
-          if [ -z "$VERSION_NAME" ] || [ "$VERSION_NAME" = "undefined" ]; then
-            VERSION_NAME="1.0.0"
-          fi
-          
-          if [ -n "${{ github.event.inputs.changelog }}" ]; then
-            CHANGELOG="${{ github.event.inputs.changelog }}"
-          else
-            CHANGELOG=$(node -p "require('./version.json').changelog" 2>/dev/null || echo "Release $VERSION_NAME")
-          fi
-          
-          TAG_NAME="v$VERSION_NAME"
-          
-          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_OUTPUT
-          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
-          
-          # Multi-line changelog output
-          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          python - << 'EOF'
+          import os, re, json, subprocess
+
+          input_ver = os.environ.get('INPUT_VERSION', '').strip().lstrip('v')
+          ref_name = os.environ.get('GITHUB_REF_NAME', '')
+
+          if input_ver:
+              new_version = input_ver
+          elif ref_name.startswith('v') and ref_name != 'v1.0.0':
+              new_version = ref_name.lstrip('v')
+          else:
+              # Read current version from version.json
+              try:
+                  with open('version.json', 'r') as f:
+                      current_json = json.load(f)
+                      base_ver = current_json.get('versionName', '1.0.0')
+              except Exception:
+                  base_ver = '1.0.0'
+
+              # Fetch all git tags
+              try:
+                  raw_tags = subprocess.check_output(['git', 'tag', '-l', 'v*'], text=True).split()
+              except Exception:
+                  raw_tags = []
+
+              if raw_tags:
+                  def semver_key(t):
+                      return [int(x) for x in re.findall(r'\d+', t)]
+                  sorted_tags = sorted(raw_tags, key=semver_key)
+                  highest_tag = sorted_tags[-1].lstrip('v')
+                  parts = [int(p) for p in re.findall(r'\d+', highest_tag)]
+                  if len(parts) >= 3:
+                      parts[-1] += 1
+                      new_version = '.'.join(map(str, parts))
+                  elif len(parts) == 2:
+                      new_version = f"{parts[0]}.{parts[1]}.1"
+                  else:
+                      new_version = f"{highest_tag}.1"
+              else:
+                  new_version = base_ver
+
+          run_num = int(os.environ.get('RUN_NUMBER', '1'))
+          new_code = run_num
+
+          # Update app/build.gradle
+          with open('app/build.gradle', 'r') as f:
+              gradle_txt = f.read()
+          gradle_txt = re.sub(r'versionCode\s+\d+', f'versionCode {new_code}', gradle_txt, count=1)
+          gradle_txt = re.sub(r'versionName\s+"[^"]+"', f'versionName "{new_version}"', gradle_txt, count=1)
+          with open('app/build.gradle', 'w') as f:
+              f.write(gradle_txt)
+
+          # Extract or default changelog
+          input_notes = os.environ.get('INPUT_CHANGELOG', '').strip()
+          if not input_notes:
+              try:
+                  input_notes = subprocess.check_output(['git', 'log', '-1', '--pretty=%B'], text=True).strip()
+              except Exception:
+                  input_notes = f"Release v{new_version}"
+
+          # Update version.json
+          v_data = {
+              "versionCode": new_code,
+              "versionName": new_version,
+              "changelog": input_notes,
+              "downloadUrl": f"https://github.com/RiyaazAli786/CrossAIStudio/releases/download/v{new_version}/CrossAIStudio-release.apk",
+              "forceUpdate": False
+          }
+          with open('version.json', 'w') as f:
+              json.dump(v_data, f, indent=2)
+
+          tag_name = f"v{new_version}"
+          print(f"Computed Target Version: {new_version} (Build {new_code}, Tag {tag_name})")
+
+          # Write to GITHUB_OUTPUT
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f"VERSION_NAME={new_version}\n")
+              out.write(f"VERSION_CODE={new_code}\n")
+              out.write(f"TAG_NAME={tag_name}\n")
+              out.write("CHANGELOG<<EOF\n")
+              out.write(input_notes + "\n")
+              out.write("EOF\n")
+          EOF
 
       - name: Build Signed Release APK
         run: ./gradlew assembleRelease --no-daemon
@@ -93,3 +161,12 @@ jobs:
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit Auto-Incremented Version to Repository
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app/build.gradle version.json
+          git commit -m "chore(release): auto-bump version to v${{ steps.release_info.outputs.VERSION_NAME }} [skip ci]" || echo "No changes to commit"
+          git push origin main

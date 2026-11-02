@@ -45,3 +45,7 @@ desktop.ini
 # Log Files
 *.log
 CrossAIStudio-release.apk
+
+# Python cache files
+__pycache__/
+*.pyc

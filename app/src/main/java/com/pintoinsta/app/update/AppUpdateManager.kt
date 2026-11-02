@@ -61,16 +61,18 @@ object AppUpdateManager {
         try {
             PostingConfigManager.setLastUpdateCheckTime(context, System.currentTimeMillis())
 
+            var lastError = "Could not reach update server."
+
             // 1. Try raw version.json first (cleanest structure)
-            var updateInfo = fetchFromRawVersionJson()
+            var updateInfo = fetchFromRawVersionJson { err -> lastError = err }
 
             // 2. Fallback to GitHub Releases API
             if (updateInfo == null) {
-                updateInfo = fetchFromGitHubReleases()
+                updateInfo = fetchFromGitHubReleases { err -> lastError = err }
             }
 
             if (updateInfo == null) {
-                return@withContext UpdateCheckResult.Error("Could not reach update server. Please check your connection.")
+                return@withContext UpdateCheckResult.Error(lastError)
             }
 
             val isNewer = isVersionNewer(
@@ -91,7 +93,7 @@ object AppUpdateManager {
         }
     }
 
-    private fun fetchFromRawVersionJson(): UpdateInfo? {
+    private fun fetchFromRawVersionJson(onError: (String) -> Unit): UpdateInfo? {
         try {
             val request = Request.Builder()
                 .url(RAW_VERSION_URL)
@@ -99,7 +101,14 @@ object AppUpdateManager {
                 .build()
 
             val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) return null
+            if (!response.isSuccessful) {
+                if (response.code == 404) {
+                    onError("GitHub repository is Private or version.json not found (HTTP 404).")
+                } else {
+                    onError("HTTP ${response.code} error from version.json")
+                }
+                return null
+            }
 
             val body = response.body?.string() ?: return null
             val json = JSONObject(body)
@@ -121,11 +130,12 @@ object AppUpdateManager {
             }
         } catch (e: Exception) {
             Log.d(TAG, "raw version.json fetch attempt: ${e.message}")
+            onError(e.message ?: "Connection error")
         }
         return null
     }
 
-    private fun fetchFromGitHubReleases(): UpdateInfo? {
+    private fun fetchFromGitHubReleases(onError: (String) -> Unit): UpdateInfo? {
         try {
             val request = Request.Builder()
                 .url(GITHUB_RELEASES_URL)
@@ -134,7 +144,14 @@ object AppUpdateManager {
                 .build()
 
             val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) return null
+            if (!response.isSuccessful) {
+                if (response.code == 404) {
+                    onError("Repository is Private or no Releases found (HTTP 404). Please make the GitHub repo Public to allow in-app updates.")
+                } else {
+                    onError("HTTP ${response.code} error from GitHub API")
+                }
+                return null
+            }
 
             val body = response.body?.string() ?: return null
             val json = JSONObject(body)

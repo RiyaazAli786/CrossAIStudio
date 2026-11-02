@@ -1,7 +1,7 @@
 {
-  "versionCode": 6,
-  "versionName": "1.0.1",
-  "changelog": "chore: bump application version in version.json",
-  "downloadUrl": "https://github.com/RiyaazAli786/CrossAIStudio/releases/download/v1.0.1/CrossAIStudio-release.apk",
+  "versionCode": 8,
+  "versionName": "1.0.2",
+  "changelog": "fix(update): provide specific HTTP error diagnostics for update checks",
+  "downloadUrl": "https://github.com/RiyaazAli786/CrossAIStudio/releases/download/v1.0.2/CrossAIStudio-release.apk",
   "forceUpdate": false
 }

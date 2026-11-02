@@ -2,6 +2,8 @@ name: Auto Release New APK
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -50,14 +52,20 @@ jobs:
             VERSION_NAME=$(node -p "require('./version.json').versionName" 2>/dev/null || echo "${GITHUB_REF_NAME#v}")
           fi
           
+          if [ -z "$VERSION_NAME" ] || [ "$VERSION_NAME" = "undefined" ]; then
+            VERSION_NAME="1.0.0"
+          fi
+          
           if [ -n "${{ github.event.inputs.changelog }}" ]; then
             CHANGELOG="${{ github.event.inputs.changelog }}"
           else
             CHANGELOG=$(node -p "require('./version.json').changelog" 2>/dev/null || echo "Release $VERSION_NAME")
           fi
           
+          TAG_NAME="v$VERSION_NAME"
+          
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_OUTPUT
-          echo "TAG_NAME=v$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
           
           # Multi-line changelog output
           echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
@@ -82,6 +90,6 @@ jobs:
           files: release_assets/CrossAIStudio-release.apk
           draft: false
           prerelease: false
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

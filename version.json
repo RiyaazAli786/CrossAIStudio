@@ -1,7 +1,7 @@
 {
-  "versionCode": 1,
-  "versionName": "1.0.0",
-  "changelog": "• Seamless Pinterest-to-Instagram automated publishing\n• Smart Gemini AI captions & First Comment hashtags\n• Android system Share Sheet integration\n• Background execution toggle in Settings\n• In-app auto-update system\n• Biometric/PIN screen lock security",
-  "downloadUrl": "https://github.com/RiyaazAli786/CrossAIStudio/releases/latest/download/CrossAIStudio-release.apk",
+  "versionCode": 6,
+  "versionName": "1.0.1",
+  "changelog": "chore: bump application version in version.json",
+  "downloadUrl": "https://github.com/RiyaazAli786/CrossAIStudio/releases/download/v1.0.1/CrossAIStudio-release.apk",
   "forceUpdate": false
 }

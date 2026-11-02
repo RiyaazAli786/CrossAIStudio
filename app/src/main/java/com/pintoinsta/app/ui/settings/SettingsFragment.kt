@@ -18,16 +18,25 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.pintoinsta.app.BuildConfig
 import com.pintoinsta.app.R
 import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.databinding.FragmentSettingsBinding
+import com.pintoinsta.app.service.CrossAIPostingService
+import com.pintoinsta.app.update.AppUpdateManager
+import com.pintoinsta.app.update.UpdateCheckResult
 import com.pintoinsta.app.util.PostingConfigManager
 import com.pintoinsta.app.util.ThemeManager
+import com.pintoinsta.app.worker.ScheduleManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class SettingsFragment : Fragment() {
 
@@ -136,6 +145,36 @@ class SettingsFragment : Fragment() {
             PostingConfigManager.setBiometricLockEnabled(requireContext(), isChecked)
             val msg = if (isChecked) "Biometric / Screen Lock enabled" else "Biometric / Screen Lock disabled"
             Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
+        }
+
+        // Background Running Toggle
+        binding.switchBackgroundService.isChecked = PostingConfigManager.isBackgroundRunningEnabled(ctx)
+        binding.switchBackgroundService.setOnCheckedChangeListener { _, isChecked ->
+            val context = requireContext()
+            PostingConfigManager.setBackgroundRunningEnabled(context, isChecked)
+            if (isChecked) {
+                CrossAIPostingService.startService(context)
+                lifecycleScope.launch {
+                    ScheduleManager.rescheduleAll(context)
+                }
+                Toast.makeText(context, "Background running active: Automation will run as scheduled", Toast.LENGTH_SHORT).show()
+            } else {
+                CrossAIPostingService.stopService(context)
+                ScheduleManager.cancelAllSchedules(context)
+                Toast.makeText(context, "Background running stopped: Service halted and tasks paused", Toast.LENGTH_LONG).show()
+            }
+        }
+
+        // App Updates Setup
+        binding.tvCurrentVersion.text = "Version ${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})"
+        binding.switchAutoCheckUpdates.isChecked = PostingConfigManager.isAutoCheckUpdatesEnabled(ctx)
+        binding.switchAutoCheckUpdates.setOnCheckedChangeListener { _, isChecked ->
+            PostingConfigManager.setAutoCheckUpdatesEnabled(requireContext(), isChecked)
+        }
+        updateLastCheckedDisplay()
+
+        binding.btnCheckUpdates.setOnClickListener {
+            checkUpdatesManually()
         }
 
         // Account Import button
@@ -401,6 +440,48 @@ class SettingsFragment : Fragment() {
         lifecycleScope.launch {
             val keywords = repository.getAllKeywords()
             adapter.updateData(keywords)
+        }
+    }
+
+    private fun updateLastCheckedDisplay() {
+        val lastCheck = PostingConfigManager.getLastUpdateCheckTime(requireContext())
+        if (lastCheck > 0L) {
+            val sdf = SimpleDateFormat("MMM d, yyyy h:mm a", Locale.getDefault())
+            binding.tvLastUpdateCheck.text = "Last checked: ${sdf.format(Date(lastCheck))}"
+        } else {
+            binding.tvLastUpdateCheck.text = "Last checked: Never"
+        }
+    }
+
+    private fun checkUpdatesManually() {
+        binding.progressUpdateCheck.visibility = View.VISIBLE
+        binding.btnCheckUpdates.isEnabled = false
+
+        lifecycleScope.launch {
+            val result = AppUpdateManager.checkForUpdates(requireContext())
+            binding.progressUpdateCheck.visibility = View.GONE
+            binding.btnCheckUpdates.isEnabled = true
+            updateLastCheckedDisplay()
+
+            when (result) {
+                is UpdateCheckResult.Available -> {
+                    AppUpdateManager.showUpdateDialog(requireActivity(), result.updateInfo)
+                }
+                is UpdateCheckResult.UpToDate -> {
+                    MaterialAlertDialogBuilder(requireContext())
+                        .setTitle("You're Up to Date!")
+                        .setMessage("CrossAIStudio v${result.currentVersion} is currently the latest version available.")
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+                is UpdateCheckResult.Error -> {
+                    MaterialAlertDialogBuilder(requireContext())
+                        .setTitle("Update Check")
+                        .setMessage("Unable to check for updates.\n\n${result.message}")
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+            }
         }
     }
 

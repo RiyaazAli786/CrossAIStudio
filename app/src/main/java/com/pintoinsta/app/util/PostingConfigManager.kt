@@ -4,7 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Manages preferences for Smart AI Captions, First Comment hashtags, and posting configuration.
+ * Manages preferences for Smart AI Captions, First Comment hashtags, posting configuration,
+ * background service execution, and app updates.
  */
 object PostingConfigManager {
 
@@ -14,6 +15,9 @@ object PostingConfigManager {
     private const val KEY_FIRST_COMMENT_HASHTAGS = "key_first_comment_hashtags"
     private const val KEY_CREDIT_ATTRIBUTION = "key_credit_attribution"
     private const val KEY_BIOMETRIC_LOCK = "key_biometric_lock"
+    private const val KEY_BACKGROUND_RUNNING = "key_background_running"
+    private const val KEY_AUTO_CHECK_UPDATES = "key_auto_check_updates"
+    private const val KEY_LAST_UPDATE_CHECK_TIME = "key_last_update_check_time"
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -50,5 +54,28 @@ object PostingConfigManager {
     fun setBiometricLockEnabled(context: Context, enabled: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_BIOMETRIC_LOCK, enabled).apply()
     }
-}
 
+    fun isBackgroundRunningEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_BACKGROUND_RUNNING, true)
+    }
+
+    fun setBackgroundRunningEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_BACKGROUND_RUNNING, enabled).apply()
+    }
+
+    fun isAutoCheckUpdatesEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_AUTO_CHECK_UPDATES, true)
+    }
+
+    fun setAutoCheckUpdatesEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_AUTO_CHECK_UPDATES, enabled).apply()
+    }
+
+    fun getLastUpdateCheckTime(context: Context): Long {
+        return getPrefs(context).getLong(KEY_LAST_UPDATE_CHECK_TIME, 0L)
+    }
+
+    fun setLastUpdateCheckTime(context: Context, timeMs: Long) {
+        getPrefs(context).edit().putLong(KEY_LAST_UPDATE_CHECK_TIME, timeMs).apply()
+    }
+}

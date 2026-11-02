@@ -6,6 +6,7 @@ import android.content.Intent
 import android.util.Log
 import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.service.CrossAIPostingService
+import com.pintoinsta.app.util.PostingConfigManager
 import com.pintoinsta.app.worker.ScheduleManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +25,11 @@ class BootReceiver : BroadcastReceiver() {
             action == Intent.ACTION_MY_PACKAGE_REPLACED ||
             action == Intent.ACTION_USER_PRESENT
         ) {
+            if (!PostingConfigManager.isBackgroundRunningEnabled(context)) {
+                Log.d(TAG, "Background running disabled by user. Skipping background service and schedule restoration on boot.")
+                return
+            }
+
             // Start persistent background service
             CrossAIPostingService.startService(context)
 

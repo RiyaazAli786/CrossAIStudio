@@ -17,6 +17,7 @@ import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.notification.NotificationHelper
 import com.pintoinsta.app.receiver.RestartServiceReceiver
 import com.pintoinsta.app.util.NetworkUtils
+import com.pintoinsta.app.util.PostingConfigManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,6 +30,7 @@ import kotlinx.coroutines.launch
  * Persistent Background Service that stays alive even when app is cleared from Recent tasks.
  * Monitors scheduled posts and automatically publishes when due and online.
  * Offline Protection: If device is offline, held posts are immediately dispatched when network reconnects.
+ * Respects user's background running toggle in Settings.
  */
 class CrossAIPostingService : Service() {
 
@@ -38,6 +40,10 @@ class CrossAIPostingService : Service() {
         const val ACTION_STOP = "action_stop_crossai_service"
 
         fun startService(context: Context) {
+            if (!PostingConfigManager.isBackgroundRunningEnabled(context)) {
+                Log.d(TAG, "Background running is disabled in Settings. Skipping startService.")
+                return
+            }
             val intent = Intent(context, CrossAIPostingService::class.java).apply {
                 action = ACTION_START
             }
@@ -46,6 +52,13 @@ class CrossAIPostingService : Service() {
             } else {
                 context.startService(intent)
             }
+        }
+
+        fun stopService(context: Context) {
+            val intent = Intent(context, CrossAIPostingService::class.java).apply {
+                action = ACTION_STOP
+            }
+            context.startService(intent)
         }
     }
 
@@ -56,6 +69,12 @@ class CrossAIPostingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        if (!PostingConfigManager.isBackgroundRunningEnabled(this)) {
+            Log.d(TAG, "Background running disabled in settings during onCreate. Terminating.")
+            stopSelf()
+            return
+        }
+
         notificationHelper = NotificationHelper.getInstance(this)
         repository = AppRepository.getInstance(this)
 
@@ -70,7 +89,8 @@ class CrossAIPostingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        if (intent?.action == ACTION_STOP || !PostingConfigManager.isBackgroundRunningEnabled(this)) {
+            Log.d(TAG, "Stopping CrossAIPostingService per request or setting.")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
@@ -93,6 +113,7 @@ class CrossAIPostingService : Service() {
 
             networkCallback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
+                    if (!PostingConfigManager.isBackgroundRunningEnabled(applicationContext)) return
                     Log.d(TAG, "Network restored! Checking for held due scheduled posts...")
                     checkDueScheduledPosts()
                 }
@@ -106,6 +127,7 @@ class CrossAIPostingService : Service() {
     private fun checkDueScheduledPosts() {
         serviceScope.launch {
             try {
+                if (!PostingConfigManager.isBackgroundRunningEnabled(applicationContext)) return@launch
                 if (!NetworkUtils.isOnline(applicationContext)) return@launch
 
                 val accounts = repository.getAllPinterestAccounts()
@@ -129,6 +151,11 @@ class CrossAIPostingService : Service() {
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        if (!PostingConfigManager.isBackgroundRunningEnabled(this)) {
+            Log.d(TAG, "Background running disabled by user. Skipping service resurrection on swipe.")
+            return
+        }
+
         Log.d(TAG, "App closed from recent tasks! Scheduling immediate service resurrection...")
 
         val restartIntent = Intent(applicationContext, RestartServiceReceiver::class.java).apply {
@@ -162,6 +189,13 @@ class CrossAIPostingService : Service() {
         serviceScope.launch {
             while (isActive) {
                 try {
+                    if (!PostingConfigManager.isBackgroundRunningEnabled(applicationContext)) {
+                        Log.d(TAG, "Background running disabled. Terminating background ticker.")
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                        break
+                    }
+
                     if (NetworkUtils.isOnline(applicationContext)) {
                         val accounts = repository.getAllPinterestAccounts()
                         val now = System.currentTimeMillis()

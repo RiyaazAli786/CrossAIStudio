@@ -27,6 +27,7 @@ import com.pintoinsta.app.data.repository.AppRepository
 import com.pintoinsta.app.util.PostingConfigManager
 import com.pintoinsta.app.databinding.ActivityMainBinding
 import com.pintoinsta.app.service.CrossAIPostingService
+import com.pintoinsta.app.update.AppUpdateManager
 import com.pintoinsta.app.ui.analytics.AnalyticsFragment
 import com.pintoinsta.app.ui.instagram.InstagramFragment
 import com.pintoinsta.app.ui.pins.PinsLogsFragment
@@ -73,7 +74,10 @@ class MainActivity : AppCompatActivity() {
 
         askNotificationPermission()
         checkBatteryOptimizations()
-        CrossAIPostingService.startService(this)
+        if (PostingConfigManager.isBackgroundRunningEnabled(this)) {
+            CrossAIPostingService.startService(this)
+        }
+        AppUpdateManager.checkOnLaunch(this)
 
         setupBottomNav()
 

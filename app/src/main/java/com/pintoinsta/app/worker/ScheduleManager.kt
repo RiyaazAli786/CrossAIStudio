@@ -10,6 +10,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.pintoinsta.app.data.model.PinterestAccount
+import com.pintoinsta.app.data.repository.AppRepository
+import com.pintoinsta.app.util.PostingConfigManager
 import java.util.concurrent.TimeUnit
 
 object ScheduleManager {
@@ -20,7 +22,7 @@ object ScheduleManager {
         val workManager = WorkManager.getInstance(context)
         val tag = getWorkTag(account.id)
 
-        if (!account.isAutoPostEnabled) {
+        if (!account.isAutoPostEnabled || !PostingConfigManager.isBackgroundRunningEnabled(context)) {
             workManager.cancelUniqueWork(tag)
             return
         }
@@ -74,6 +76,11 @@ object ScheduleManager {
 
     fun setupDailyPostSchedule(context: Context) {
         val workManager = WorkManager.getInstance(context)
+        if (!PostingConfigManager.isBackgroundRunningEnabled(context)) {
+            workManager.cancelUniqueWork(InstagramDailyPostWorker.WORK_NAME)
+            return
+        }
+
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
@@ -90,5 +97,22 @@ object ScheduleManager {
             ExistingPeriodicWorkPolicy.KEEP,
             dailyRequest
         )
+    }
+
+    fun cancelAllSchedules(context: Context) {
+        val workManager = WorkManager.getInstance(context)
+        workManager.cancelAllWork()
+    }
+
+    suspend fun rescheduleAll(context: Context) {
+        if (!PostingConfigManager.isBackgroundRunningEnabled(context)) return
+        val repository = AppRepository.getInstance(context)
+        val accounts = repository.getAllPinterestAccounts()
+        for (account in accounts) {
+            if (account.isAutoPostEnabled) {
+                updateAccountSchedule(context, account)
+            }
+        }
+        setupDailyPostSchedule(context)
     }
 }

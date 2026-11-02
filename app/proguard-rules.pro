@@ -29,6 +29,10 @@
 # Keep AndroidX Biometric
 -keep class androidx.biometric.** { *; }
 
+# Keep App Update Models and Manager
+-keep class com.pintoinsta.app.update.** { *; }
+-keep class androidx.core.content.FileProvider { *; }
+
 # Strip logging calls in release APK for maximum privacy and security
 -assumenosideeffects class android.util.Log {
     public static boolean isLoggable(java.lang.String, int);

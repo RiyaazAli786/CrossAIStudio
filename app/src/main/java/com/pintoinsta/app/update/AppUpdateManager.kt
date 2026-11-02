@@ -46,8 +46,8 @@ sealed class UpdateCheckResult {
 object AppUpdateManager {
 
     private const val TAG = "AppUpdateManager"
-    private const val GITHUB_RELEASES_URL = "https://api.github.com/repos/rahmatullah-21/CrossAIStudio/releases/latest"
-    private const val RAW_VERSION_URL = "https://raw.githubusercontent.com/rahmatullah-21/CrossAIStudio/main/version.json"
+    private const val GITHUB_RELEASES_URL = "https://api.github.com/repos/RiyaazAli786/CrossAIStudio/releases/latest"
+    private const val RAW_VERSION_URL = "https://raw.githubusercontent.com/RiyaazAli786/CrossAIStudio/main/version.json"
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -158,7 +158,7 @@ object AppUpdateManager {
 
             if (apkUrl.isEmpty()) {
                 // Default release asset link
-                apkUrl = "https://github.com/rahmatullah-21/CrossAIStudio/releases/download/v$tagName/CrossAIStudio-release.apk"
+                apkUrl = "https://github.com/RiyaazAli786/CrossAIStudio/releases/download/v$tagName/CrossAIStudio-release.apk"
             }
 
             if (tagName.isNotEmpty()) {

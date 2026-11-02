@@ -56,7 +56,7 @@ def update_version_json(new_code, new_name, changelog):
         "versionCode": new_code,
         "versionName": new_name,
         "changelog": changelog,
-        "downloadUrl": f"https://github.com/rahmatullah-21/CrossAIStudio/releases/download/v{new_name}/CrossAIStudio-release.apk",
+        "downloadUrl": f"https://github.com/RiyaazAli786/CrossAIStudio/releases/download/v{new_name}/CrossAIStudio-release.apk",
         "forceUpdate": False
     }
     with open(VERSION_JSON_PATH, "w", encoding="utf-8") as f:
@@ -99,8 +99,8 @@ def git_commit_and_tag(new_name, auto_push=False):
         print("ðŸ“¤ Pushing to origin main and tags...")
         subprocess.run(["git", "push", "origin", "main", "--tags"], cwd=PROJECT_DIR, check=True)
         print("\nâœ¨ Successfully pushed! GitHub Actions is now automatically building & publishing the release.")
-        print(f"ðŸ“– View progress at: https://github.com/rahmatullah-21/CrossAIStudio/actions")
-        print(f"ðŸŽ‰ Download page: https://github.com/rahmatullah-21/CrossAIStudio/releases/tag/{tag_name}")
+        print(f"ðŸ“– View progress at: https://github.com/RiyaazAli786/CrossAIStudio/actions")
+        print(f"ðŸŽ‰ Download page: https://github.com/RiyaazAli786/CrossAIStudio/releases/tag/{tag_name}")
     else:
         print(f"\nâ„¹ï¸ Push manually when ready: git push origin main --tags")
 

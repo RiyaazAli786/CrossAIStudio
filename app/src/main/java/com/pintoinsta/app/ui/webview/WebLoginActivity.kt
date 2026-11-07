@@ -9,6 +9,7 @@ import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.util.Log
@@ -91,7 +92,7 @@ class WebLoginActivity : AppCompatActivity() {
 
     private fun setupToolbar() {
         binding.toolbar.title = if (platform == PLATFORM_PINTEREST) "Pinterest Login" else "Instagram Login"
-        binding.toolbar.subtitle = if (reLoginUsername != null) "Re-logging in: @$reLoginUsername" else "Log in to your account"
+        binding.toolbar.subtitle = if (reLoginUsername != null) "Re-logging in: @$reLoginUsername" else "Log in to add account"
         binding.toolbar.setNavigationIcon(android.R.drawable.ic_menu_close_clear_cancel)
         binding.toolbar.setNavigationOnClickListener { finish() }
     }
@@ -313,65 +314,93 @@ class WebLoginActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
-            var targetAccountCookies = ""
-            var targetUsername = reLoginUsername
+            if (isFromCard && !reLoginUsername.isNullOrBlank()) {
+                val targetUsername = reLoginUsername!!
+                var targetAccountCookies = ""
 
-            if (platform == PLATFORM_PINTEREST) {
-                val accounts = repository.getAllPinterestAccounts()
-                val matched = if (!targetUsername.isNullOrBlank()) {
-                    accounts.find { it.username.equals(targetUsername, ignoreCase = true) }
+                if (platform == PLATFORM_PINTEREST) {
+                    val accounts = repository.getAllPinterestAccounts()
+                    val matched = accounts.find { it.username.equals(targetUsername, ignoreCase = true) }
+                    if (matched != null && matched.cookies.isNotBlank()) {
+                        targetAccountCookies = matched.cookies
+                    }
                 } else {
-                    accounts.firstOrNull { it.cookies.contains("_pinterest_sess=") }
+                    val accounts = repository.getAllInstagramAccounts()
+                    val matched = accounts.find { it.username.equals(targetUsername, ignoreCase = true) }
+                    if (matched != null && matched.cookies.isNotBlank()) {
+                        targetAccountCookies = matched.cookies
+                    }
                 }
-                if (matched != null && matched.cookies.isNotBlank()) {
-                    targetAccountCookies = matched.cookies
-                    targetUsername = matched.username
-                }
-            } else {
-                val accounts = repository.getAllInstagramAccounts()
-                val matched = if (!targetUsername.isNullOrBlank()) {
-                    accounts.find { it.username.equals(targetUsername, ignoreCase = true) }
-                } else {
-                    accounts.firstOrNull { it.cookies.contains("sessionid=") }
-                }
-                if (matched != null && matched.cookies.isNotBlank()) {
-                    targetAccountCookies = matched.cookies
-                    targetUsername = matched.username
+
+                val hasSession = targetAccountCookies.isNotBlank() && (
+                    (platform == PLATFORM_PINTEREST && targetAccountCookies.contains("_pinterest_sess=")) ||
+                    (platform == PLATFORM_INSTAGRAM && targetAccountCookies.contains("sessionid="))
+                )
+
+                if (hasSession) {
+                    // Isolate session by clearing first, then inject target account's cookies
+                    clearAllCookiesAndStorage(cookieManager, webView)
+
+                    val initialUrl = if (platform == PLATFORM_PINTEREST) {
+                        CookieUtils.injectPinterestCookies(targetAccountCookies)
+                        "https://www.pinterest.com/"
+                    } else {
+                        CookieUtils.injectInstagramCookies(targetAccountCookies)
+                        "https://www.instagram.com/"
+                    }
+                    Log.d(TAG, "WebLoginActivity restoring card session for @$targetUsername: $initialUrl")
+                    webView.loadUrl(initialUrl)
+                    if (platform == PLATFORM_PINTEREST) {
+                        startPinterestProfilePoller()
+                    }
+                    return@launch
                 }
             }
 
-            val hasSession = targetAccountCookies.isNotBlank() && (
-                (platform == PLATFORM_PINTEREST && targetAccountCookies.contains("_pinterest_sess=")) ||
-                (platform == PLATFORM_INSTAGRAM && targetAccountCookies.contains("sessionid="))
-            )
+            // "Add Account" mode (or re-login for an account without a saved valid session):
+            // Always open the official clean login page of the respective platform
+            Log.d(TAG, "Opening clean login page for $platform (Add Account mode)")
+            clearAllCookiesAndStorage(cookieManager, webView)
 
-            val initialUrl = if (hasSession) {
-                // If account has valid session cookies, inject them and navigate to feed, NOT the login form!
-                if (platform == PLATFORM_PINTEREST) {
-                    CookieUtils.injectPinterestCookies(targetAccountCookies)
-                    "https://www.pinterest.com/"
-                } else {
-                    CookieUtils.injectInstagramCookies(targetAccountCookies)
-                    "https://www.instagram.com/"
-                }
+            val loginUrl = if (platform == PLATFORM_PINTEREST) {
+                "https://www.pinterest.com/login/"
             } else {
-                // Only if there is no session to restore and user clicked add, clear cache and load login form
-                if (!isFromCard) {
-                    cookieManager.removeAllCookies(null)
-                    cookieManager.flush()
-                    webView.clearCache(true)
-                }
-                if (platform == PLATFORM_PINTEREST) {
-                    "https://www.pinterest.com/login/"
-                } else {
-                    "https://www.instagram.com/accounts/login/"
-                }
+                "https://www.instagram.com/accounts/login/"
             }
 
-            Log.d(TAG, "WebLoginActivity loading $initialUrl with hasSession=$hasSession (user: $targetUsername)")
-            webView.loadUrl(initialUrl)
+            updateStatusMessage(loginUrl)
+            webView.loadUrl(loginUrl)
             if (platform == PLATFORM_PINTEREST) {
                 startPinterestProfilePoller()
+            }
+        }
+    }
+
+    private suspend fun clearAllCookiesAndStorage(cookieManager: CookieManager, webView: WebView) {
+        withContext(Dispatchers.Main) {
+            try {
+                suspendCancellableCoroutine<Boolean> { cont ->
+                    cookieManager.removeAllCookies { success ->
+                        if (cont.isActive) cont.resume(success)
+                    }
+                }
+                cookieManager.flush()
+            } catch (e: Exception) {
+                Log.w(TAG, "removeAllCookies error: ${e.message}")
+            }
+
+            try {
+                WebStorage.getInstance().deleteAllData()
+            } catch (e: Exception) {
+                Log.w(TAG, "WebStorage deleteAllData error: ${e.message}")
+            }
+
+            try {
+                webView.clearCache(true)
+                webView.clearFormData()
+                webView.clearHistory()
+            } catch (e: Exception) {
+                Log.w(TAG, "clearCache error: ${e.message}")
             }
         }
     }
@@ -395,7 +424,7 @@ class WebLoginActivity : AppCompatActivity() {
             !onAuthPage && hasSess && hasAuth
         } else {
             // Instagram: Must NOT be on login or Google auth URL
-            val onAuthPage = cleanUrl.contains("/accounts/login") || cleanUrl.contains("/accounts/emailsignup") || cleanUrl.contains("/accounts/onetap") || cleanUrl.contains("accounts.google.com")
+            val onAuthPage = cleanUrl.contains("/accounts/login") || cleanUrl.contains("/accounts/emailsignup") || cleanUrl.contains("accounts.google.com")
             val hasSessionId = cookies.contains("sessionid=")
             val dsUserId = extractCookieValue(cookies, "ds_user_id")
             !onAuthPage && hasSessionId && dsUserId.isNotEmpty() && dsUserId != "0"
@@ -428,7 +457,14 @@ class WebLoginActivity : AppCompatActivity() {
         val currentUrl = binding.webView.url
         val cookies = getPlatformCookies()
 
-        if (!isUserLoggedIn(currentUrl, cookies)) {
+        val isManualValid = if (platform == PLATFORM_PINTEREST) {
+            cookies.contains("_pinterest_sess=")
+        } else {
+            val ds = extractCookieValue(cookies, "ds_user_id")
+            cookies.contains("sessionid=") && ds.isNotEmpty() && ds != "0"
+        }
+
+        if (!isUserLoggedIn(currentUrl, cookies) && !isManualValid) {
             Toast.makeText(
                 this,
                 "Please complete login in the WebView first! You are not logged in yet.",

@@ -762,9 +762,9 @@ class AppRepository(private val context: Context) {
     }
 
     /**
-     * Requirement 1: Publishes a pin across multiple selected Instagram accounts.
-     * If multiple accounts are selected, it publishes with a random delay between 5 and 10 minutes
-     * between each account post to protect account reputation.
+     * Publishes a pin across multiple selected Instagram accounts.
+     * When multiple accounts are selected, it publishes with a delay of 2 minutes (120 seconds)
+     * between each account to protect account safety and comply with Instagram posting rate limits.
      */
     suspend fun postPinToMultipleAccounts(
         pin: SavedPin,
@@ -783,11 +783,10 @@ class AppRepository(private val context: Context) {
             val instaAccount = dbHelper.getInstagramAccountById(instaId)
             val username = instaAccount?.username ?: "Account_$instaId"
 
-            // If this is a subsequent account, wait random delay between 5 and 10 minutes (300 - 600 seconds)
+            // If this is a subsequent account, wait exactly 2 minutes (120 seconds) delay
             if (index > 0) {
-                val delaySeconds = Random.nextLong(300, 601) // 5 to 10 minutes
-                val delayMinutes = delaySeconds / 60
-                val delayMsg = "Waiting random delay of ${delayMinutes}m before posting Pin ${pin.pinId} to @$username..."
+                val delaySeconds = 120L // 2 minutes delay
+                val delayMsg = "Waiting 2 minutes delay before posting Pin ${pin.pinId} to @$username..."
                 Log.d(TAG, delayMsg)
                 dbHelper.insertPostLog(
                     PostLog(
@@ -797,11 +796,16 @@ class AppRepository(private val context: Context) {
                         message = delayMsg
                     )
                 )
-                withContext(Dispatchers.Main) {
-                    onProgress?.invoke(index, validIds.size, delayMsg)
-                }
 
-                delay(delaySeconds * 1000L)
+                for (secLeft in delaySeconds downTo 1) {
+                    val m = secLeft / 60
+                    val s = secLeft % 60
+                    val timeStr = if (m > 0) "${m}m ${s}s" else "${s}s"
+                    withContext(Dispatchers.Main) {
+                        onProgress?.invoke(index, validIds.size, "Waiting 2 min delay before @$username ($timeStr left)...")
+                    }
+                    delay(1000L)
+                }
             }
 
             withContext(Dispatchers.Main) {
@@ -818,6 +822,81 @@ class AppRepository(private val context: Context) {
         }
 
         Pair(successCount, results.joinToString(", "))
+    }
+
+    /**
+     * Publishes multiple selected pins across one or more selected Instagram accounts.
+     * Staggers each publication with a delay of 2 minutes (120 seconds) between each account/post.
+     */
+    suspend fun postMultiplePinsToMultipleAccounts(
+        pins: List<SavedPin>,
+        instagramAccountIds: List<Long>,
+        onProgress: ((currentStep: Int, totalSteps: Int, message: String) -> Unit)? = null
+    ): Pair<Int, String> = withContext(Dispatchers.IO) {
+        val validIds = instagramAccountIds.distinct()
+        if (pins.isEmpty() || validIds.isEmpty()) {
+            return@withContext Pair(0, "No pins or Instagram accounts selected for posting")
+        }
+
+        val totalOperations = pins.size * validIds.size
+        var currentStep = 0
+        var totalSuccess = 0
+        val results = mutableListOf<String>()
+
+        for ((pinIdx, pin) in pins.withIndex()) {
+            for ((accIdx, instaId) in validIds.withIndex()) {
+                currentStep++
+                val instaAccount = dbHelper.getInstagramAccountById(instaId)
+                val username = instaAccount?.username ?: "Account_$instaId"
+
+                // Apply 2-minute delay before each subsequent post/account operation
+                if (currentStep > 1) {
+                    val delaySeconds = 120L // 2 minutes
+                    val delayMsg = "Waiting 2 minutes delay before posting Pin ${pin.pinId} (${pinIdx + 1}/${pins.size}) to @$username..."
+                    Log.d(TAG, delayMsg)
+                    dbHelper.insertPostLog(
+                        PostLog(
+                            pinId = pin.pinId,
+                            instagramAccountId = instaId,
+                            status = "INFO",
+                            message = delayMsg
+                        )
+                    )
+
+                    for (secLeft in delaySeconds downTo 1) {
+                        val m = secLeft / 60
+                        val s = secLeft % 60
+                        val timeStr = if (m > 0) "${m}m ${s}s" else "${s}s"
+                        withContext(Dispatchers.Main) {
+                            onProgress?.invoke(
+                                currentStep - 1,
+                                totalOperations,
+                                "Waiting 2m before @$username ($timeStr left) [Post ${pinIdx + 1}/${pins.size}]"
+                            )
+                        }
+                        delay(1000L)
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    onProgress?.invoke(
+                        currentStep,
+                        totalOperations,
+                        "Publishing Pin ${pin.pinId} (${pinIdx + 1}/${pins.size}) to @$username..."
+                    )
+                }
+
+                val res = postSinglePin(pin, instaId)
+                if (res.first) {
+                    totalSuccess++
+                    results.add("Pin ${pin.pinId} -> @$username: Success")
+                } else {
+                    results.add("Pin ${pin.pinId} -> @$username: Failed (${res.second})")
+                }
+            }
+        }
+
+        Pair(totalSuccess, results.joinToString(", "))
     }
 
     /**

@@ -97,6 +97,22 @@
             android:textStyle="bold" />
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnBulkPublish"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:layout_marginEnd="6dp"
+            android:backgroundTint="@color/primary"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:text="Publish"
+            android:textColor="@color/white"
+            android:textSize="12sp"
+            app:icon="@drawable/ic_instagram"
+            app:iconSize="14dp"
+            app:iconTint="@color/white" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnBulkDelete"
             style="@style/Widget.Material3.Button.TonalButton"
             android:layout_width="wrap_content"

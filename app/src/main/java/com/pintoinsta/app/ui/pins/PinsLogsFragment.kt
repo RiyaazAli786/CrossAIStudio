@@ -324,6 +324,14 @@ class PinsLogsFragment : Fragment() {
             }
         }
 
+        // Bulk publish button for Saved Pins
+        pagePinsBinding.btnBulkPublish.setOnClickListener {
+            val selectedPins = pinsAdapter.getSelectedPins()
+            if (selectedPins.isNotEmpty()) {
+                publishSelectedPins(selectedPins)
+            }
+        }
+
         // Bulk delete button for Saved Pins
         pagePinsBinding.btnBulkDelete.setOnClickListener {
             val selectedIds = pinsAdapter.getSelectedPinIds()
@@ -562,6 +570,9 @@ class PinsLogsFragment : Fragment() {
             pagePinsBinding.tvSelectedCount.text = "$selectedCount of $totalCount selected"
             pagePinsBinding.btnBulkDelete.isEnabled = selectedCount > 0
             pagePinsBinding.btnBulkDelete.text = if (selectedCount > 0) "Delete ($selectedCount)" else "Delete"
+            pagePinsBinding.btnBulkPublish.visibility = if (currentSubTabId == R.id.btnSubSaved) View.VISIBLE else View.GONE
+            pagePinsBinding.btnBulkPublish.isEnabled = selectedCount > 0
+            pagePinsBinding.btnBulkPublish.text = if (selectedCount > 0) "Publish ($selectedCount)" else "Publish"
             pagePinsBinding.cbSelectAll.isChecked = selectedCount > 0 && selectedCount == totalCount
         } else {
             pagePinsBinding.layoutSelectionBar.visibility = View.GONE
@@ -653,7 +664,7 @@ class PinsLogsFragment : Fragment() {
                 .setMultiChoiceItems(accountNames, checkedItems) { _, which, isChecked ->
                     checkedItems[which] = isChecked
                 }
-                .setMessage("Select the accounts to publish this pin to. If multiple accounts are selected, publishing will be staggered with a random delay of 5 to 10 minutes between accounts.")
+                .setMessage("Select the accounts to publish this pin to. If multiple accounts are selected, publishing will be staggered with a delay of 2 minutes between accounts.")
                 .setPositiveButton("Publish") { _, _ ->
                     val selectedIds = accounts.filterIndexed { index, _ -> checkedItems[index] }.map { it.id }
                     if (selectedIds.isEmpty()) {
@@ -675,17 +686,63 @@ class PinsLogsFragment : Fragment() {
         button.isEnabled = false
         button.text = "Publishing..."
 
-        Toast.makeText(
-            requireContext(),
-            "Starting publish for Pin ${pin.pinId} (${selectedAccountIds.size} accounts selected)...",
-            Toast.LENGTH_SHORT
-        ).show()
+        val isMultiAccount = selectedAccountIds.size > 1
+        var progressDialog: AlertDialog? = null
+        var tvProgress: TextView? = null
+        var progressBar: ProgressBar? = null
+
+        if (isMultiAccount) {
+            val layout = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(60, 40, 60, 40)
+            }
+
+            tvProgress = TextView(requireContext()).apply {
+                text = "Starting publish for Pin ${pin.pinId} across ${selectedAccountIds.size} accounts..."
+                setTextColor(ContextCompat.getColor(context, R.color.text_primary))
+                textSize = 14f
+            }
+
+            progressBar = ProgressBar(requireContext(), null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = selectedAccountIds.size
+                progress = 0
+                isIndeterminate = false
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = 24
+                }
+            }
+
+            layout.addView(tvProgress)
+            layout.addView(progressBar)
+
+            progressDialog = AlertDialog.Builder(requireContext())
+                .setTitle("Publishing Pin (2-Min Delay)")
+                .setView(layout)
+                .setCancelable(false)
+                .create()
+
+            progressDialog.show()
+        } else {
+            Toast.makeText(
+                requireContext(),
+                "Starting publish for Pin ${pin.pinId}...",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
 
         lifecycleScope.launch {
             val result = repository.postPinToMultipleAccounts(pin, selectedAccountIds) { current, total, msg ->
                 button.text = "Pub $current/$total..."
-                Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
+                tvProgress?.text = msg
+                progressBar?.progress = current
             }
+
+            try {
+                progressDialog?.dismiss()
+            } catch (_: Exception) {}
 
             if (result.first > 0) {
                 // Requirement 3: Move immediately to published as soon as publish video completes!
@@ -706,6 +763,116 @@ class PinsLogsFragment : Fragment() {
             }
             // Reload and update immediately
             loadData()
+        }
+    }
+
+    private fun publishSelectedPins(pins: List<SavedPin>) {
+        lifecycleScope.launch {
+            val accounts = repository.getAllInstagramAccounts()
+            if (accounts.isEmpty()) {
+                Toast.makeText(
+                    requireContext(),
+                    "No Instagram accounts added yet. Please add an Instagram account first.",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@launch
+            }
+
+            if (accounts.size == 1) {
+                val acc = accounts.first()
+                AlertDialog.Builder(requireContext())
+                    .setTitle("Publish ${pins.size} Selected Post(s)")
+                    .setMessage("Publish ${pins.size} post(s) to @${acc.username}?\n\nIf multiple posts are selected, they will be published with a 2-minute delay between each post to protect account safety.")
+                    .setPositiveButton("Publish (${pins.size} Posts)") { _, _ ->
+                        executeBulkPublish(pins, listOf(acc.id))
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+                return@launch
+            }
+
+            val accountNames = accounts.map { "@${it.username} (${it.status})" }.toTypedArray()
+            val checkedItems = BooleanArray(accounts.size) { false }
+            checkedItems[0] = true
+
+            AlertDialog.Builder(requireContext())
+                .setTitle("Select Instagram Accounts")
+                .setMultiChoiceItems(accountNames, checkedItems) { _, which, isChecked ->
+                    checkedItems[which] = isChecked
+                }
+                .setMessage("Select the accounts to publish ${pins.size} selected post(s) to.\n\nPublishing across accounts will be staggered with a 2-minute delay between each account to protect your accounts.")
+                .setPositiveButton("Publish (${pins.size} Posts)") { _, _ ->
+                    val selectedIds = accounts.filterIndexed { index, _ -> checkedItems[index] }.map { it.id }
+                    if (selectedIds.isEmpty()) {
+                        Toast.makeText(requireContext(), "No accounts selected", Toast.LENGTH_SHORT).show()
+                    } else {
+                        executeBulkPublish(pins, selectedIds)
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    private fun executeBulkPublish(
+        pins: List<SavedPin>,
+        selectedAccountIds: List<Long>
+    ) {
+        val totalOperations = pins.size * selectedAccountIds.size
+
+        val layout = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(60, 40, 60, 40)
+        }
+
+        val tvProgress = TextView(requireContext()).apply {
+            text = "Preparing to publish ${pins.size} post(s) across ${selectedAccountIds.size} account(s)..."
+            setTextColor(ContextCompat.getColor(context, R.color.text_primary))
+            textSize = 14f
+        }
+
+        val progressBar = ProgressBar(requireContext(), null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = totalOperations
+            progress = 0
+            isIndeterminate = false
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 24
+            }
+        }
+
+        layout.addView(tvProgress)
+        layout.addView(progressBar)
+
+        val progressDialog = AlertDialog.Builder(requireContext())
+            .setTitle("Publishing Posts (2-Min Delay)")
+            .setView(layout)
+            .setCancelable(false)
+            .create()
+
+        progressDialog.show()
+
+        lifecycleScope.launch {
+            val result = repository.postMultiplePinsToMultipleAccounts(pins, selectedAccountIds) { current, total, msg ->
+                tvProgress.text = msg
+                progressBar.progress = current
+            }
+
+            try {
+                progressDialog.dismiss()
+            } catch (_: Exception) {}
+
+            pinsAdapter.setSelectionMode(false)
+            updateSelectionUI()
+            loadData()
+
+            AlertDialog.Builder(requireContext())
+                .setTitle("Publish Completed")
+                .setMessage("Successfully published ${result.first} of $totalOperations target operations!\n\n${result.second}")
+                .setPositiveButton("OK", null)
+                .show()
         }
     }
 

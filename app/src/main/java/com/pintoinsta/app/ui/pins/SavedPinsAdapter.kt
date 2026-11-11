@@ -66,6 +66,8 @@ class SavedPinsAdapter(
 
     fun getSelectedPinIds(): List<String> = selectedPinIds.toList()
 
+    fun getSelectedPins(): List<SavedPin> = pins.filter { selectedPinIds.contains(it.pinId) }
+
     fun getSelectedCount(): Int = selectedPinIds.size
 
     fun toggleSelection(pinId: String) {

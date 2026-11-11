@@ -1,7 +1,7 @@
 {
-  "versionCode": 9,
-  "versionName": "1.0.3",
-  "changelog": "feat: add WebLoginActivity for handling platform authentication and cookie capture",
-  "downloadUrl": "https://github.com/RiyaazAli786/CrossAIStudio/releases/download/v1.0.3/CrossAIStudio-release.apk",
+  "versionCode": 10,
+  "versionName": "1.0.4",
+  "changelog": "feat: add AppRepository, PinsLogsFragment, SavedPinsAdapter, and saved pins layout",
+  "downloadUrl": "https://github.com/RiyaazAli786/CrossAIStudio/releases/download/v1.0.4/CrossAIStudio-release.apk",
   "forceUpdate": false
 }

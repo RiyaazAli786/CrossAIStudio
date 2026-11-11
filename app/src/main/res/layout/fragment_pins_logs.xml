@@ -49,33 +49,21 @@
             app:tint="@color/text_primary" />
     </LinearLayout>
 
-    <!-- Main ViewPager2 for left/right swipe between tabs -->
-    <androidx.viewpager2.widget.ViewPager2
-        android:id="@+id/viewPager"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
-
-    <!-- Bottom Subtabs Container (above main bottom navigation) -->
+    <!-- Subtabs Container (Placed at top right below header for clean navigation) -->
     <LinearLayout
         android:id="@+id/layoutBottomSubTabs"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@color/surface"
-        android:elevation="4dp"
         android:orientation="vertical">
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="@color/divider" />
 
         <com.google.android.material.button.MaterialButtonToggleGroup
             android:id="@+id/bottomSubTabsGroup"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginHorizontal="12dp"
-            android:layout_marginVertical="6dp"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="8dp"
             app:checkedButton="@id/btnSubTabSearch"
             app:selectionRequired="true"
             app:singleSelection="true">
@@ -88,9 +76,17 @@
                 android:layout_weight="1"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
-                android:text="Custom Search"
-                android:textSize="11sp"
+                android:insetLeft="0dp"
+                android:insetRight="0dp"
+                android:paddingHorizontal="4dp"
+                android:singleLine="true"
+                android:maxLines="1"
+                android:ellipsize="none"
+                android:text="Search"
+                android:textSize="12sp"
                 app:icon="@drawable/ic_search"
+                app:iconGravity="textStart"
+                app:iconPadding="4dp"
                 app:iconSize="14dp" />
 
             <com.google.android.material.button.MaterialButton
@@ -101,9 +97,17 @@
                 android:layout_weight="1"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
-                android:text="Saved Pins"
-                android:textSize="11sp"
+                android:insetLeft="0dp"
+                android:insetRight="0dp"
+                android:paddingHorizontal="4dp"
+                android:singleLine="true"
+                android:maxLines="1"
+                android:ellipsize="none"
+                android:text="Saved"
+                android:textSize="12sp"
                 app:icon="@drawable/ic_pins"
+                app:iconGravity="textStart"
+                app:iconPadding="4dp"
                 app:iconSize="14dp" />
 
             <com.google.android.material.button.MaterialButton
@@ -114,11 +118,31 @@
                 android:layout_weight="1"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
-                android:text="Activity Logs"
-                android:textSize="11sp"
+                android:insetLeft="0dp"
+                android:insetRight="0dp"
+                android:paddingHorizontal="4dp"
+                android:singleLine="true"
+                android:maxLines="1"
+                android:ellipsize="none"
+                android:text="Logs"
+                android:textSize="12sp"
                 app:icon="@drawable/ic_refresh"
+                app:iconGravity="textStart"
+                app:iconPadding="4dp"
                 app:iconSize="14dp" />
         </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/divider" />
     </LinearLayout>
+
+    <!-- Main ViewPager2 for left/right swipe between tabs -->
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/viewPager"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
 
 </LinearLayout>

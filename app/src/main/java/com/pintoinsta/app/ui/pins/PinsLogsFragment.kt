@@ -538,10 +538,10 @@ class PinsLogsFragment : Fragment() {
     private fun updateSearchSelectionUI(selectedCount: Int, totalCount: Int) {
         if (totalCount > 0) {
             pageSearchBinding.layoutSearchSelectionBar.visibility = View.VISIBLE
-            pageSearchBinding.tvSearchSelectedCount.text = "$selectedCount of $totalCount selected"
+            pageSearchBinding.tvSearchSelectedCount.text = "$selectedCount selected"
             pageSearchBinding.cbSelectAllSearch.isChecked = selectedCount > 0 && selectedCount == totalCount
             pageSearchBinding.btnSaveSelectedPins.isEnabled = selectedCount > 0
-            pageSearchBinding.btnSaveSelectedPins.text = if (selectedCount > 0) "Save Selected ($selectedCount)" else "Save Selected"
+            pageSearchBinding.btnSaveSelectedPins.text = "Save"
         } else {
             pageSearchBinding.layoutSearchSelectionBar.visibility = View.GONE
         }
@@ -567,12 +567,12 @@ class PinsLogsFragment : Fragment() {
             pagePinsBinding.btnSelectMode.text = "Cancel"
             val selectedCount = pinsAdapter.getSelectedCount()
             val totalCount = pinsAdapter.itemCount
-            pagePinsBinding.tvSelectedCount.text = "$selectedCount of $totalCount selected"
+            pagePinsBinding.tvSelectedCount.text = "$selectedCount selected"
             pagePinsBinding.btnBulkDelete.isEnabled = selectedCount > 0
-            pagePinsBinding.btnBulkDelete.text = if (selectedCount > 0) "Delete ($selectedCount)" else "Delete"
+            pagePinsBinding.btnBulkDelete.text = "Delete"
             pagePinsBinding.btnBulkPublish.visibility = if (currentSubTabId == R.id.btnSubSaved) View.VISIBLE else View.GONE
             pagePinsBinding.btnBulkPublish.isEnabled = selectedCount > 0
-            pagePinsBinding.btnBulkPublish.text = if (selectedCount > 0) "Publish ($selectedCount)" else "Publish"
+            pagePinsBinding.btnBulkPublish.text = "Publish"
             pagePinsBinding.cbSelectAll.isChecked = selectedCount > 0 && selectedCount == totalCount
         } else {
             pagePinsBinding.layoutSelectionBar.visibility = View.GONE
@@ -585,7 +585,7 @@ class PinsLogsFragment : Fragment() {
         val publishedList = allPins.filter { it.isPosted }
 
         pagePinsBinding.btnSubSaved.text = "Saved (${unpostedList.size})"
-        pagePinsBinding.btnSubPublished.text = "Published (${publishedList.size})"
+        pagePinsBinding.btnSubPublished.text = "Posted (${publishedList.size})"
 
         val displayedPins = if (currentSubTabId == R.id.btnSubSaved) unpostedList else publishedList
         pinsAdapter.updateData(displayedPins)

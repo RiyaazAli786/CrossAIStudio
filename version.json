@@ -1,7 +1,7 @@
 {
-  "versionCode": 10,
-  "versionName": "1.0.4",
-  "changelog": "feat: add AppRepository, PinsLogsFragment, SavedPinsAdapter, and saved pins layout",
-  "downloadUrl": "https://github.com/RiyaazAli786/CrossAIStudio/releases/download/v1.0.4/CrossAIStudio-release.apk",
+  "versionCode": 11,
+  "versionName": "1.0.5",
+  "changelog": "Fix text overflow and refine subtab layouts in Pins and Logs",
+  "downloadUrl": "https://github.com/RiyaazAli786/CrossAIStudio/releases/download/v1.0.5/CrossAIStudio-release.apk",
   "forceUpdate": false
 }
